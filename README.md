@@ -191,14 +191,32 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 
 1.  **启动并配置服务**: 确保服务已运行，并通过环境变量或管理面板/API 完成了必要的配置（Admin API Key, LLM Keys, 目标仓库/项目的 Webhook Secret 和 Access Token）。
 
+    -   **准备 GitHub Access Token**:
+        为了让本应用能够读取 Pull Request 的变更内容并在 PR 中发表评论，您需要生成一个 GitHub Personal Access Token (PAT)。
+        -   访问 GitHub -> `Settings` -> `Developer settings` -> `Personal access tokens` -> `Tokens (classic)`。
+        -   点击 `Generate new token` (或 `Generate new token (classic)`)。
+        -   **Note**: 给 Token 起一个描述性的名字，例如 `ai-code-review-helper-token`。
+        -   **Expiration**: 根据您的安全策略选择合适的过期时间。
+        -   **Select scopes**: 为了最小化权限，请仅勾选必要的权限。对于此应用，通常需要以下权限：
+            -   `repo`: 完全控制私有仓库。如果您只用于公共仓库，可能只需要 `public_repo`。
+                -   更细致地，如果您希望进一步限制，可以尝试仅勾选 `repo:status`, `repo_deployment`, `public_repo`, 和 `write:discussion` (如果需要评论 PR discussion) 以及 `pull_requests:write` (用于在 PR 中创建评论)。最核心的是能够读取 PR diff 和写入 PR 评论。**`repo` 权限是最简单直接的，但权限较大。请根据您的实际需求和安全评估进行选择。** 经过测试，为了能够读取 diff 和发表评论，至少需要 `repo` 范围下的 `Contents: Read-only` 和 `Pull requests: Read & write`。如果您的仓库是私有的，则需要完整的 `repo` 权限。
+        -   点击 `Generate token`。
+        -   **重要**: 生成 Token 后，请立即复制并妥善保存它。关闭页面后您将无法再次看到该 Token。
+        -   此 Token 将用于后续在管理面板中配置 GitHub 仓库。
+
 2.  **在 GitHub/GitLab 中设置 Webhook**:
     -   **GitHub**:
-        -   进入仓库的 `Settings` -> `Webhooks` -> `Add webhook`。
-        -   **Payload URL**: `http://<your_server_host>:<your_server_port>/github_webhook`
-        -   **Content type**: `application/json`
-        -   **Secret**: 填入您为此仓库在管理面板/API中配置的 `Webhook Secret`。
-        -   **Which events would you like to trigger this webhook?**: 选择 "Let me select individual events." 然后勾选 "Pull requests"。
-        -   确保 "Active" 已勾选，然后点击 "Add webhook"。
+        -   进入目标 GitHub 仓库页面。
+        -   点击 `Settings` (仓库设置)。
+        -   在左侧导航栏中，选择 `Webhooks`。
+        -   点击 `Add webhook` 按钮。
+        -   **Payload URL**: 填入您的 AI Code Review Helper 服务暴露的 GitHub Webhook 地址，例如 `http://<your_server_host>:<your_server_port>/github_webhook`。
+        -   **Content type**: 选择 `application/json`。
+        -   **Secret**: 填入您为此仓库在 AI Code Review Helper 管理面板中配置的 `Webhook Secret`。这个 Secret 用于验证 Webhook 请求的来源。
+        -   **Which events would you like to trigger this webhook?**: 选择 "Let me select individual events."。
+            -   在展开的事件列表中，**仅勾选 "Pull requests"**。应用目前只处理 Pull Request 相关的事件。
+        -   确保 "Active" 复选框已勾选。
+        -   点击 `Add webhook`。
     -   **GitLab**:
         -   进入项目的 `Settings` -> `Webhooks`。
         -   **URL**: `http://<your_server_host>:<your_server_port>/gitlab_webhook`
