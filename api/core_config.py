@@ -32,6 +32,7 @@ redis_client = None
 REDIS_KEY_PREFIX = "ai_code_review_helper:"
 REDIS_GITHUB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}github_repo_configs"
 REDIS_GITLAB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}gitlab_project_configs"
+REDIS_PROCESSED_COMMITS_SET_KEY = f"{REDIS_KEY_PREFIX}processed_commits_set"
 
 
 def init_redis_client():
@@ -95,6 +96,45 @@ def load_configs_from_redis():
             print(f"Unexpected error during config loading from Redis: {e}.")
     else:
         print("Redis client not available. Skipping loading configs from Redis.")
+
+
+def _get_processed_commit_key(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str) -> str:
+    """生成用于存储已处理 commit 的唯一键。"""
+    return f"{vcs_type}:{identifier}:{pr_mr_id}:{commit_sha}"
+
+
+def is_commit_processed(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str) -> bool:
+    """检查指定的 commit 是否已经被处理过。"""
+    if not redis_client:
+        print("Redis client not available, cannot check if commit was processed. Assuming not processed.")
+        return False
+    if not commit_sha: # 如果 commit_sha 为空，则不应视为已处理
+        print(f"Warning: commit_sha is empty for {vcs_type}:{identifier}:{pr_mr_id}. Assuming not processed.")
+        return False
+        
+    key = _get_processed_commit_key(vcs_type, identifier, str(pr_mr_id), commit_sha)
+    try:
+        return redis_client.sismember(REDIS_PROCESSED_COMMITS_SET_KEY, key)
+    except redis.exceptions.RedisError as e:
+        print(f"Redis error checking if commit {key} is processed: {e}. Assuming not processed.")
+        return False
+
+
+def mark_commit_as_processed(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str):
+    """将指定的 commit 标记为已处理。"""
+    if not redis_client:
+        print("Redis client not available, cannot mark commit as processed.")
+        return
+    if not commit_sha: # 如果 commit_sha 为空，则不应标记
+        print(f"Warning: commit_sha is empty for {vcs_type}:{identifier}:{pr_mr_id}. Skipping marking as processed.")
+        return
+
+    key = _get_processed_commit_key(vcs_type, identifier, str(pr_mr_id), commit_sha)
+    try:
+        redis_client.sadd(REDIS_PROCESSED_COMMITS_SET_KEY, key)
+        print(f"Successfully marked commit {key} as processed.")
+    except redis.exceptions.RedisError as e:
+        print(f"Redis error marking commit {key} as processed: {e}")
 
 
 # --- 仓库/项目特定配置存储 (内存字典, 会被 Redis 数据填充) ---

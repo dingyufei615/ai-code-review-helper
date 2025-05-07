@@ -1,7 +1,10 @@
 from flask import request, abort, jsonify
 import json
 from api.app_factory import app
-from api.core_config import github_repo_configs, gitlab_project_configs, app_configs
+from api.core_config import (
+    github_repo_configs, gitlab_project_configs, app_configs,
+    is_commit_processed, mark_commit_as_processed
+)
 from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import get_github_pr_changes, add_github_pr_comment, get_gitlab_mr_changes, add_gitlab_mr_comment
 from api.services.llm_service import get_openai_code_review
@@ -93,6 +96,11 @@ def github_webhook():
     print(f"\n--- Received GitHub Pull Request Hook ---")
     print(f"Repository: {repo_full_name}, PR Number: {pull_number}, Title: {pr_title}")
     print(f"State: {pr_state}, Action: {action}, Head SHA: {head_sha}, PR URL: {pr_html_url}")
+
+    # 检查此 commit 是否已被处理
+    if head_sha and is_commit_processed('github', repo_full_name, str(pull_number), head_sha):
+        print(f"GitHub: Commit {head_sha} for PR {repo_full_name}#{pull_number} has already been processed. Skipping.")
+        return "Commit already processed", 200
 
     print("GitHub: Fetching and parsing PR changes...")
     structured_changes = get_github_pr_changes(owner, repo_name, pull_number, access_token)
@@ -224,7 +232,12 @@ def gitlab_webhook():
 
     print(f"\n--- Received GitLab Merge Request Hook ---")
     print(f"Project ID: {project_id_str}, MR IID: {mr_iid}, Title: {mr_title}")
-    print(f"State: {mr_state}, Action: {mr_action}, MR URL: {mr_url}")
+    print(f"State: {mr_state}, Action: {mr_action}, MR URL: {mr_url}, Head SHA (from payload): {head_sha_payload}")
+
+    # 检查此 commit 是否已被处理
+    if head_sha_payload and is_commit_processed('gitlab', project_id_str, str(mr_iid), head_sha_payload):
+        print(f"GitLab: Commit {head_sha_payload} for MR {project_id_str}#{mr_iid} has already been processed. Skipping.")
+        return "Commit already processed", 200
 
     print("GitLab: Fetching and parsing MR changes...")
     structured_changes, position_info = get_gitlab_mr_changes(project_id_str, mr_iid, access_token)
@@ -302,5 +315,15 @@ def gitlab_webhook():
 {review_summary_line}
 """
         send_to_wecom_bot(summary_content)
+
+    # 标记此 commit 为已处理
+    # 使用从 webhook payload 中获取的 head_sha_payload，因为它更直接对应于触发事件的 commit。
+    # position_info 中的 head_sha 是从 MR versions API 获取的，理论上应该一致，但 payload 的更可靠。
+    if head_sha_payload:
+        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), head_sha_payload)
+    elif position_info and position_info.get("head_sha"): # Fallback if somehow payload SHA was missing
+        print(f"Warning: head_sha_payload was empty, using head_sha from position_info for marking as processed: {position_info.get('head_sha')}")
+        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), position_info.get("head_sha"))
+
 
     return "GitLab Webhook processed successfully", 200
