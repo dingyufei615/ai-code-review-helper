@@ -147,21 +147,34 @@ def remove_processed_commit_entries_for_pr_mr(vcs_type: str, identifier: str, pr
         return
 
     pr_mr_key_prefix = f"{vcs_type}:{identifier}:{str(pr_mr_id)}:"
-    keys_to_remove = []
-    removed_count = 0
+    keys_to_remove_batch = []
+    total_removed_count = 0
+    batch_size = 100  # 每批删除100个key
 
     try:
         # 使用 SSCAN 迭代集合成员以避免阻塞
-        # 注意：SSCAN 在 Python redis 库中返回一个迭代器
         for member_bytes in redis_client.sscan_iter(REDIS_PROCESSED_COMMITS_SET_KEY):
             member_str = member_bytes.decode('utf-8')
             if member_str.startswith(pr_mr_key_prefix):
-                keys_to_remove.append(member_str)
+                keys_to_remove_batch.append(member_str)
 
-        if keys_to_remove:
-            removed_count = redis_client.srem(REDIS_PROCESSED_COMMITS_SET_KEY, *keys_to_remove)
+            if len(keys_to_remove_batch) >= batch_size:
+                removed_in_batch = redis_client.srem(REDIS_PROCESSED_COMMITS_SET_KEY, *keys_to_remove_batch)
+                total_removed_count += removed_in_batch
+                logger.debug(
+                    f"批处理：为 {vcs_type} {identifier} #{pr_mr_id} 从 Redis 中移除了 {removed_in_batch} 个条目。")
+                keys_to_remove_batch = []  # 重置批处理列表
+
+        # 处理最后一批不足 batch_size 的 key
+        if keys_to_remove_batch:
+            removed_in_batch = redis_client.srem(REDIS_PROCESSED_COMMITS_SET_KEY, *keys_to_remove_batch)
+            total_removed_count += removed_in_batch
+            logger.debug(
+                f"最后批处理：为 {vcs_type} {identifier} #{pr_mr_id} 从 Redis 中移除了 {removed_in_batch} 个条目。")
+
+        if total_removed_count > 0:
             logger.info(
-                f"为 {vcs_type} {identifier} #{pr_mr_id} 从 Redis 中移除了 {removed_count} 个已处理的 commit 条目。")
+                f"为 {vcs_type} {identifier} #{pr_mr_id} 从 Redis 中总共移除了 {total_removed_count} 个已处理的 commit 条目。")
         else:
             logger.info(
                 f"在 Redis 中未找到与 {vcs_type} {identifier} #{pr_mr_id} 相关的已处理 commit 条目。")
