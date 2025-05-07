@@ -4,6 +4,9 @@ import hashlib
 from functools import wraps
 from flask import request, abort
 from api.core_config import ADMIN_API_KEY
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def parse_single_file_diff(diff_text, file_path, old_file_path=None):
@@ -44,7 +47,7 @@ def parse_single_file_diff(diff_text, file_path, old_file_path=None):
                     file_changes["context"]["new"].extend(hunk_context_lines)
                     hunk_context_lines = []  # 为新的 hunk 重置
             else:
-                print(f"Warning: Could not parse hunk header in {file_path}: {line}")
+                logger.warning(f"警告: 无法解析 {file_path} 中的 hunk 标头: {line}")
                 old_line_num_start = 0  # 重置行号计数器
                 new_line_num_start = 0
                 old_line_num_current = 0
@@ -90,8 +93,8 @@ def require_admin_key(f):
     def decorated_function(*args, **kwargs):
         api_key = request.headers.get('X-Admin-API-Key')
         if not api_key or not hmac.compare_digest(api_key, ADMIN_API_KEY):
-            print("Unauthorized access attempt to config endpoint.")
-            abort(401, "Unauthorized: Invalid or missing X-Admin-API-Key header.")
+            logger.warning("检测到对配置端点的未授权访问尝试。")
+            abort(401, "未授权: X-Admin-API-Key 请求头无效或缺失。")
         return f(*args, **kwargs)
 
     return decorated_function
@@ -101,21 +104,21 @@ def verify_github_signature(req, secret):
     """验证 GitHub Webhook 签名 (HMAC-SHA256)"""
     signature_header = req.headers.get('X-Hub-Signature-256')
     if not signature_header:
-        print("Error: X-Hub-Signature-256 header is missing.")
+        logger.error("错误: X-Hub-Signature-256 请求头缺失。")
         return False
 
     sha_name, signature = signature_header.split('=', 1)
     if sha_name != 'sha256':
-        print(f"Error: Signature uses unsupported algorithm {sha_name}.")
+        logger.error(f"错误: 签名使用不支持的算法 {sha_name}。")
         return False
 
     if not secret:
-        print("Error: Webhook secret is not configured for this repository.")
+        logger.error("错误: 此仓库未配置 Webhook secret。")
         return False
 
     mac = hmac.new(secret.encode('utf-8'), msg=req.data, digestmod=hashlib.sha256)
     if not hmac.compare_digest(mac.hexdigest(), signature):
-        print("Error: Invalid X-Hub-Signature-256.")
+        logger.error("错误: 无效的 X-Hub-Signature-256。")
         return False
 
     return True
@@ -125,13 +128,13 @@ def verify_gitlab_signature(req, secret):
     """验证 GitLab Webhook 签名 (使用项目特定的 Secret)"""
     gitlab_token = req.headers.get('X-Gitlab-Token')
     if not gitlab_token:
-        print("Error: X-Gitlab-Token header is missing.")
+        logger.error("错误: X-Gitlab-Token 请求头缺失。")
         return False
     if not secret:
-        print("Error: Webhook secret is not configured for this project.")
+        logger.error("错误: 此项目未配置 Webhook secret。")
         return False
 
     if not hmac.compare_digest(gitlab_token, secret):
-        print(f"Error: Invalid X-Gitlab-Token.")
+        logger.error(f"错误: 无效的 X-Gitlab-Token。")
         return False
     return True

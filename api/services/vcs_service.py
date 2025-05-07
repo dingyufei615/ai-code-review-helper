@@ -1,14 +1,17 @@
 import requests
 import json
 import traceback
+import logging
 from api.core_config import app_configs, gitlab_project_configs
 from api.utils import parse_single_file_diff
+
+logger = logging.getLogger(__name__)
 
 
 def get_github_pr_changes(owner, repo_name, pull_number, access_token):
     """从 GitHub API 获取 Pull Request 的变更，并为每个文件解析成结构化数据"""
     if not access_token:
-        print(f"Error: Access token is not configured for repository {owner}/{repo_name}.")
+        logger.error(f"错误: 仓库 {owner}/{repo_name} 未配置访问令牌。")
         return None
 
     current_github_api_url = app_configs.get("GITHUB_API_URL", "https://api.github.com")
@@ -21,16 +24,16 @@ def get_github_pr_changes(owner, repo_name, pull_number, access_token):
     structured_changes = {}
 
     try:
-        print(f"Fetching PR files from: {files_url}")
+        logger.info(f"从以下地址获取 PR 文件: {files_url}")
         response = requests.get(files_url, headers=headers, timeout=60)
         response.raise_for_status()
         files_data = response.json()
 
         if not files_data:
-            print(f"No files found in the Pull Request {pull_number} for {owner}/{repo_name}.")
+            logger.info(f"在 {owner}/{repo_name} 的 Pull Request {pull_number} 中未找到文件。")
             return {}
 
-        print(f"Received {len(files_data)} file entries from API for PR {pull_number}.")
+        logger.info(f"从 API 收到 PR {pull_number} 的 {len(files_data)} 个文件条目。")
 
         for file_item in files_data:
             file_patch_text = file_item.get('patch')
@@ -39,55 +42,57 @@ def get_github_pr_changes(owner, repo_name, pull_number, access_token):
             status = file_item.get('status')
 
             if not file_patch_text and status != 'removed':
-                print(
-                    f"Warning: Skipping file item due to missing patch text for non-removed file. File: {new_path}, Status: {status}")
+                logger.warning(
+                    f"警告: 因非删除文件缺少补丁文本而跳过文件项。文件: {new_path}, 状态: {status}")
                 continue
 
             if status == 'removed':
-                if not file_patch_text:
+                if not file_patch_text:  # Usually removed files might not have a patch, or it's empty
                     file_changes_data = {
-                        "path": new_path,
+                        "path": new_path,  # new_path is the path of the removed file
                         "old_path": None,
-                        "changes": [{"type": "delete", "old_line": 0, "new_line": None, "content": "File removed"}],
-                        "context": {"old": "", "new": ""},
-                        "lines_changed": 0
+                        # No old_path if it's just a removal, unless it was renamed then removed (complex case)
+                        "changes": [{"type": "delete", "old_line": 0, "new_line": None, "content": "文件已删除"}],
+                        "context": {"old": "", "new": ""},  # No context for a fully removed file via this path
+                        "lines_changed": 0  # Or count lines if available from another source
                     }
                     structured_changes[new_path] = file_changes_data
-                    print(f"Synthesized 'removed' status for {new_path}.")
+                    logger.info(f"为 {new_path} 合成了 'removed' 状态。")
                     continue
 
-            print(f"Parsing diff for file: {new_path} (Old: {old_path if old_path else 'N/A'}, Status: {status})")
+            logger.info(f"解析文件 diff: {new_path} (旧路径: {old_path if old_path else 'N/A'}, 状态: {status})")
             try:
                 # 使用通用的 parse_single_file_diff
                 file_parsed_changes = parse_single_file_diff(file_patch_text, new_path, old_path)
                 if file_parsed_changes and file_parsed_changes.get("changes"):
                     structured_changes[new_path] = file_parsed_changes
-                    print(f"Successfully parsed {len(file_parsed_changes['changes'])} changes for {new_path}.")
-                elif status == 'added' and not file_parsed_changes.get("changes"):
-                    print(
-                        f"File {new_path} is new but no changes parsed by diff parser. Content might be empty or not in hunk format.")
-                else:
-                    print(
-                        f"No changes parsed from diff for {new_path} or file was removed without specific diff lines.")
+                    logger.info(f"成功解析 {new_path} 的 {len(file_parsed_changes['changes'])} 处变更。")
+                elif status == 'added' and not file_parsed_changes.get("changes"):  # Empty new file
+                    logger.info(
+                        f"文件 {new_path} 是新文件但无变更内容被解析 (可能为空文件)。")
+                elif status == 'removed' and not file_parsed_changes.get(
+                        "changes"):  # File removed, patch might be empty
+                    logger.info(f"文件 {new_path} 已删除，无具体 diff 行。")
+                else:  # Other statuses or unexpected empty changes
+                    logger.info(
+                        f"未从 {new_path} 的 diff 中解析出变更。状态: {status}")
             except Exception as parse_e:
-                print(f"Error parsing diff for file {new_path}: {parse_e}")
-                traceback.print_exc()
+                logger.exception(f"解析文件 {new_path} 的 diff 时出错:")
 
         if not structured_changes:
-            print(f"No parseable changes found across all files for PR {pull_number} in {owner}/{repo_name}.")
+            logger.info(f"在 {owner}/{repo_name} 的 PR {pull_number} 的所有文件中均未找到可解析的变更。")
 
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from GitHub API ({files_url}): {e}")
+        logger.error(f"从 GitHub API ({files_url}) 获取数据时出错: {e}")
         if 'response' in locals() and response is not None:
-            print(f"Response status: {response.status_code}, Body: {response.text[:500]}...")
+            logger.error(f"响应状态: {response.status_code}, 响应体: {response.text[:500]}...")
     except json.JSONDecodeError as json_e:
-        print(f"Error decoding JSON response from GitHub API ({files_url}): {json_e}")
+        logger.error(f"解码来自 GitHub API ({files_url}) 的 JSON 响应时出错: {json_e}")
         if 'response' in locals() and response is not None:
-            print(f"Response text: {response.text[:500]}...")
+            logger.error(f"响应文本: {response.text[:500]}...")
     except Exception as e:
-        print(
-            f"An unexpected error occurred while fetching/parsing diffs for PR {pull_number} in {owner}/{repo_name}: {e}")
-        traceback.print_exc()
+        logger.exception(
+            f"获取/解析 {owner}/{repo_name} 中 PR {pull_number} 的 diff 时发生意外错误:")
 
     return structured_changes
 
@@ -95,17 +100,18 @@ def get_github_pr_changes(owner, repo_name, pull_number, access_token):
 def get_gitlab_mr_changes(project_id, mr_iid, access_token):
     """从 GitLab API 获取 Merge Request 的变更，并为每个文件解析成结构化数据"""
     if not access_token:
-        print(f"Error: Access token is not configured for project {project_id}.")
+        logger.error(f"错误: 项目 {project_id} 未配置访问令牌。")
         return None, None
 
     project_config = gitlab_project_configs.get(str(project_id), {})
     project_specific_instance_url = project_config.get("instance_url")
-    
-    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL", "https://gitlab.com")
+
+    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL",
+                                                                                   "https://gitlab.com")
     if project_specific_instance_url:
-        print(f"Using project-specific GitLab instance URL for project {project_id}: {project_specific_instance_url}")
+        logger.info(f"项目 {project_id} 使用项目特定的 GitLab 实例 URL: {project_specific_instance_url}")
     else:
-        print(f"Using global GitLab instance URL for project {project_id}: {current_gitlab_instance_url}")
+        logger.info(f"项目 {project_id} 使用全局 GitLab 实例 URL: {current_gitlab_instance_url}")
 
     versions_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/versions"
     headers = {"PRIVATE-TOKEN": access_token}
@@ -113,7 +119,7 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
     position_info = None
 
     try:
-        print(f"Fetching MR versions from: {versions_url}")
+        logger.info(f"从以下地址获取 MR 版本: {versions_url}")
         response = requests.get(versions_url, headers=headers, timeout=60)
         response.raise_for_status()
         versions_data = response.json()
@@ -126,17 +132,17 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
                 "head_sha": latest_version.get("head_commit_sha"),
             }
             latest_version_id = latest_version.get("id")
-            print(f"Extracted position info from latest version (ID: {latest_version_id}): {position_info}")
+            logger.info(f"从最新版本 (ID: {latest_version_id}) 提取的位置信息: {position_info}")
 
             # current_gitlab_instance_url is already defined above using project-specific or global config
             version_detail_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/versions/{latest_version_id}"
-            print(f"Fetching details for version ID {latest_version_id} from: {version_detail_url}")
+            logger.info(f"从以下地址获取版本 ID {latest_version_id} 的详细信息: {version_detail_url}")
             version_detail_response = requests.get(version_detail_url, headers=headers, timeout=60)
             version_detail_response.raise_for_status()
             version_detail_data = version_detail_response.json()
 
             api_diffs = version_detail_data.get('diffs', [])
-            print(f"Received {len(api_diffs)} file diffs from API for version ID {latest_version_id}.")
+            logger.info(f"从 API 收到版本 ID {latest_version_id} 的 {len(api_diffs)} 个文件 diff。")
 
             for diff_item in api_diffs:
                 file_diff_text = diff_item.get('diff')
@@ -145,44 +151,42 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
                 is_renamed = diff_item.get('renamed_file', False)
 
                 if not file_diff_text or not new_path:
-                    print(
-                        f"Warning: Skipping diff item due to missing diff text or new_path. Item: {diff_item.get('new_path', 'N/A')}")
+                    logger.warning(
+                        f"警告: 因缺少 diff 文本或 new_path 而跳过 diff 项。项: {diff_item.get('new_path', 'N/A')}")
                     continue
 
-                print(f"Parsing diff for file: {new_path} (Old: {old_path if is_renamed else 'N/A'})")
+                logger.info(f"解析文件 diff: {new_path} (旧路径: {old_path if is_renamed else 'N/A'})")
                 try:
                     # 使用通用的 parse_single_file_diff
                     file_parsed_changes = parse_single_file_diff(file_diff_text, new_path,
                                                                  old_path if is_renamed else None)
                     if file_parsed_changes and file_parsed_changes.get("changes"):
                         structured_changes[new_path] = file_parsed_changes
-                        print(f"Successfully parsed {len(file_parsed_changes['changes'])} changes for {new_path}.")
+                        logger.info(f"成功解析 {new_path} 的 {len(file_parsed_changes['changes'])} 处变更。")
                     else:
-                        print(f"No changes parsed from diff for {new_path}.")
+                        logger.info(f"未从 {new_path} 的 diff 中解析出变更。")
                 except Exception as parse_e:
-                    print(f"Error parsing diff for file {new_path}: {parse_e}")
-                    traceback.print_exc()
+                    logger.exception(f"解析文件 {new_path} 的 diff 时出错:")
 
             if not structured_changes:
-                print(f"No parseable changes found across all files for MR {mr_iid} in project {project_id}.")
+                logger.info(f"在项目 {project_id} 的 MR {mr_iid} 的所有文件中均未找到可解析的变更。")
         else:
-            print(f"No versions found in the initial response from GitLab for MR {mr_iid} in project {project_id}.")
+            logger.info(f"GitLab 对项目 {project_id} 的 MR {mr_iid} 的初始响应中未找到版本。")
 
     except requests.exceptions.RequestException as e:
         request_url = locals().get('version_detail_url') or locals().get('versions_url', 'GitLab API')
         error_response = locals().get('version_detail_response') or locals().get('response')
-        print(f"Error fetching data from {request_url}: {e}")
+        logger.error(f"从 {request_url} 获取数据时出错: {e}")
         if error_response is not None:
-            print(f"Response status: {error_response.status_code}, Body: {error_response.text[:500]}...")
+            logger.error(f"响应状态: {error_response.status_code}, 响应体: {error_response.text[:500]}...")
     except json.JSONDecodeError as json_e:
         request_url = locals().get('version_detail_url') or locals().get('versions_url', 'GitLab API')
         error_response = locals().get('version_detail_response') or locals().get('response')
-        print(f"Error decoding JSON response from {request_url}: {json_e}")
+        logger.error(f"解码来自 {request_url} 的 JSON 响应时出错: {json_e}")
         if error_response is not None:
-            print(f"Response text: {error_response.text[:500]}...")
+            logger.error(f"响应文本: {error_response.text[:500]}...")
     except Exception as e:
-        print(f"An unexpected error occurred while fetching/parsing diffs for MR {mr_iid} in project {project_id}: {e}")
-        traceback.print_exc()
+        logger.exception(f"获取/解析项目 {project_id} 中 MR {mr_iid} 的 diff 时发生意外错误:")
 
     return structured_changes, position_info
 
@@ -190,10 +194,10 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
 def add_github_pr_comment(owner, repo_name, pull_number, access_token, review, head_sha):
     """向 GitHub Pull Request 的特定行添加评论"""
     if not access_token:
-        print("Error: Cannot add comment, access token is missing.")
+        logger.error("错误: 无法添加评论，缺少访问令牌。")
         return False
     if not head_sha:
-        print("Error: Cannot add comment, head_sha is missing.")
+        logger.error("错误: 无法添加评论，缺少 head_sha。")
         return False
 
     current_github_api_url = app_configs.get("GITHUB_API_URL", "https://api.github.com")
@@ -218,7 +222,7 @@ def add_github_pr_comment(owner, repo_name, pull_number, access_token, review, h
     file_path = review.get("file")
 
     if not file_path:
-        print("Warning: Skipping comment, review is missing 'file' path.")
+        logger.warning("警告: 跳过评论，审查缺少 'file' 路径。")
         return False
 
     payload = {
@@ -237,68 +241,69 @@ def add_github_pr_comment(owner, repo_name, pull_number, access_token, review, h
         current_github_api_url = app_configs.get("GITHUB_API_URL", "https://api.github.com")
         general_comment_url = f"{current_github_api_url}/repos/{owner}/{repo_name}/issues/{pull_number}/comments"
         general_payload = {"body": f"**AI Review Comment (File: {file_path})**\n\n{body}"}
-        target_desc = f"general PR comment for file {file_path}"
+        target_desc = f"针对文件 {file_path} 的通用 PR 评论"
         current_url_to_use = general_comment_url
         current_payload_to_use = general_payload
-        print(f"No specific new line for review on {file_path}. Posting as general PR comment.")
+        logger.info(f"{file_path} 上没有特定新行的审查。将作为通用 PR 评论发布。")
     else:
         current_url_to_use = comment_url
         current_payload_to_use = payload
-        print(f"Attempting to add line comment to {target_desc}")
+        logger.info(f"尝试向 {target_desc} 添加行评论")
 
     try:
         response = requests.post(current_url_to_use, headers=headers, json=current_payload_to_use, timeout=30)
         response.raise_for_status()
-        print(f"Successfully added comment to GitHub PR #{pull_number} ({target_desc})")
+        logger.info(f"成功向 GitHub PR #{pull_number} ({target_desc}) 添加评论")
         return True
     except requests.exceptions.RequestException as e:
-        error_message = f"Error adding GitHub comment ({target_desc}): {e}"
+        error_message = f"添加 GitHub 评论 ({target_desc}) 时出错: {e}"
         if 'response' in locals() and response is not None:
-            error_message += f" - Status: {response.status_code} - Body: {response.text[:500]}"
-        print(error_message)
+            error_message += f" - 状态: {response.status_code} - 响应体: {response.text[:500]}"
+        logger.error(error_message)
 
         if line_comment_possible and current_url_to_use == comment_url:
-            print("Falling back to posting as a general PR comment due to specific line comment error.")
+            logger.warning("由于特定行评论错误，回退到作为通用 PR 评论发布。")
             current_github_api_url = app_configs.get("GITHUB_API_URL", "https://api.github.com")
             general_comment_url = f"{current_github_api_url}/repos/{owner}/{repo_name}/issues/{pull_number}/comments"
-            fallback_payload = {"body": f"**(Comment originally for {target_desc})**\n\n{body}"}
+            fallback_payload = {"body": f"**(评论原针对 {target_desc})**\n\n{body}"}
             try:
                 fallback_response = requests.post(general_comment_url, headers=headers, json=fallback_payload,
                                                   timeout=30)
                 fallback_response.raise_for_status()
-                print(f"Successfully added comment as general PR discussion after line comment failure.")
+                logger.info(f"行评论失败后，成功作为通用 PR 讨论添加评论。")
                 return True
             except Exception as fallback_e:
-                fb_error_message = f"Error adding fallback general GitHub comment: {fallback_e}"
+                fb_error_message = f"添加回退的通用 GitHub 评论时出错: {fallback_e}"
                 if 'fallback_response' in locals() and fallback_response is not None:
-                    fb_error_message += f" - Status: {fallback_response.status_code} - Body: {fallback_response.text[:500]}"
-                print(fb_error_message)
+                    fb_error_message += f" - 状态: {fallback_response.status_code} - 响应体: {fallback_response.text[:500]}"
+                logger.error(fb_error_message)
                 return False
         return False
     except Exception as e:
-        print(f"An unexpected error occurred while adding GitHub comment ({target_desc}): {e}")
+        logger.exception(f"添加 GitHub 评论 ({target_desc}) 时发生意外错误:")
         return False
 
 
 def add_gitlab_mr_comment(project_id, mr_iid, access_token, review, position_info):
     """向 GitLab Merge Request 的特定行添加评论"""
     if not access_token:
-        print("Error: Cannot add comment, access token is missing.")
+        logger.error("错误: 无法添加评论，缺少访问令牌。")
         return False
     if not position_info or not position_info.get("head_sha") or not position_info.get(
             "base_sha") or not position_info.get("start_sha"):
-        print(
-            f"Error: Cannot add comment, essential position info (head_sha/base_sha/start_sha) is missing. Got: {position_info}")
+        logger.error(
+            f"错误: 无法添加评论，缺少必要的位置信息 (head_sha/base_sha/start_sha)。得到: {position_info}")
         return False
 
     project_config = gitlab_project_configs.get(str(project_id), {})
     project_specific_instance_url = project_config.get("instance_url")
 
-    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL", "https://gitlab.com")
+    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL",
+                                                                                   "https://gitlab.com")
     if project_specific_instance_url:
-        print(f"Using project-specific GitLab instance URL for comments on project {project_id}: {project_specific_instance_url}")
+        logger.info(f"项目 {project_id} 的评论使用项目特定的 GitLab 实例 URL: {project_specific_instance_url}")
     else:
-        print(f"Using global GitLab instance URL for comments on project {project_id}: {current_gitlab_instance_url}")
+        logger.info(f"项目 {project_id} 的评论使用全局 GitLab 实例 URL: {current_gitlab_instance_url}")
     comment_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/discussions"
     headers = {"PRIVATE-TOKEN": access_token, "Content-Type": "application/json"}
 
@@ -323,7 +328,7 @@ def add_gitlab_mr_comment(project_id, mr_iid, access_token, review, position_inf
     old_file_path = review.get("old_path")
 
     if not file_path:
-        print("Warning: Skipping comment, review is missing 'file' path.")
+        logger.warning("警告: 跳过评论，审查缺少 'file' 路径。")
         return False
 
     line_comment_possible = False
@@ -338,46 +343,46 @@ def add_gitlab_mr_comment(project_id, mr_iid, access_token, review, position_inf
         position_data["old_line"] = lines_info["old"]
         position_data["new_path"] = file_path
         line_comment_possible = True
-        target_desc = f"file {position_data['old_path']} old line {lines_info['old']}"
+        target_desc = f"文件 {position_data['old_path']} 旧行号 {lines_info['old']}"
     else:
-        target_desc = f"general discussion for file {file_path}"
+        target_desc = f"针对文件 {file_path} 的通用讨论"
         line_comment_possible = False
 
     if line_comment_possible:
         payload = {"body": body, "position": position_data}
-        print(f"Attempting to add positioned comment to {target_desc}")
+        logger.info(f"尝试向 {target_desc} 添加带位置的评论")
     else:
         payload = {"body": f"**AI Review Comment (File: {file_path})**\n\n{body}"}
-        print(f"No specific line info in review for {file_path}. Posting as general MR discussion.")
+        logger.info(f"{file_path} 的审查中没有特定行信息。将作为通用 MR 讨论发布。")
 
     response_obj = None  # Define response_obj to ensure it's available in except block
     try:
         response_obj = requests.post(comment_url, headers=headers, json=payload, timeout=30)
         response_obj.raise_for_status()
-        print(f"Successfully added comment to GitLab MR {mr_iid} ({target_desc})")
+        logger.info(f"成功向 GitLab MR {mr_iid} ({target_desc}) 添加评论")
         return True
     except requests.exceptions.RequestException as e:
-        error_message = f"Error adding GitLab comment ({target_desc}): {e}"
+        error_message = f"添加 GitLab 评论 ({target_desc}) 时出错: {e}"
         if response_obj is not None:  # Check if response_obj was assigned
-            error_message += f" - Status: {response_obj.status_code} - Body: {response_obj.text[:500]}"
-        print(error_message)
+            error_message += f" - 状态: {response_obj.status_code} - 响应体: {response_obj.text[:500]}"
+        logger.error(error_message)
 
         if line_comment_possible:
-            print("Falling back to posting as a general comment due to position error.")
-            fallback_payload = {"body": f"**(Comment originally for {target_desc})**\n\n{body}"}
+            logger.warning("由于位置错误，回退到作为通用评论发布。")
+            fallback_payload = {"body": f"**(评论原针对 {target_desc})**\n\n{body}"}
             fallback_response_obj = None
             try:
                 fallback_response_obj = requests.post(comment_url, headers=headers, json=fallback_payload, timeout=30)
                 fallback_response_obj.raise_for_status()
-                print(f"Successfully added comment as general discussion after position failure.")
+                logger.info(f"位置评论失败后，成功作为通用讨论添加评论。")
                 return True
             except Exception as fallback_e:
-                fb_error_message = f"Error adding fallback general GitLab comment: {fallback_e}"
+                fb_error_message = f"添加回退的通用 GitLab 评论时出错: {fallback_e}"
                 if fallback_response_obj is not None:
-                    fb_error_message += f" - Status: {fallback_response_obj.status_code} - Body: {fallback_response_obj.text[:500]}"
-                print(fb_error_message)
+                    fb_error_message += f" - 状态: {fallback_response_obj.status_code} - 响应体: {fallback_response_obj.text[:500]}"
+                logger.error(fb_error_message)
                 return False
         return False
     except Exception as e:
-        print(f"An unexpected error occurred while adding GitLab comment ({target_desc}): {e}")
+        logger.exception(f"添加 GitLab 评论 ({target_desc}) 时发生意外错误:")
         return False

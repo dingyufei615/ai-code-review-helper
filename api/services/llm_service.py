@@ -1,7 +1,9 @@
 import json
 from openai import OpenAI
 from api.core_config import app_configs
+import logging
 
+logger = logging.getLogger(__name__)
 openai_client = None
 
 
@@ -15,8 +17,8 @@ def initialize_openai_client():
 
         # 检查 API Key 是否有效（非空且不是占位符）
         if not current_api_key or current_api_key == "xxxx-xxxx-xxxx-xxxx":
-            print(
-                "Warning: OpenAI API Key is not configured or is a placeholder. OpenAI client will not be initialized.")
+            logger.warning(
+                "警告: OpenAI API Key 未配置或为占位符。OpenAI 客户端将不会初始化。")
             openai_client = None
             return
 
@@ -25,28 +27,28 @@ def initialize_openai_client():
             # 确保 Ollama 等兼容 API 的 URL 格式正确
             if not current_base_url.endswith('/api') and not current_base_url.endswith('/'):  # 常见Ollama路径
                 corrected_base_url = current_base_url.rstrip('/') + '/v1'  # 尝试附加 /v1
-                print(
-                    f"Correcting OpenAI API base URL from '{current_base_url}' to '{corrected_base_url}' for OpenAI library compatibility.")
+                logger.info(
+                    f"为 OpenAI 库兼容性，修正 OpenAI API 基础 URL 从 '{current_base_url}' 到 '{corrected_base_url}'。")
                 current_base_url = corrected_base_url
             else:
-                print(f"Using custom OpenAI API base URL: {current_base_url}")
+                logger.info(f"使用自定义 OpenAI API 基础 URL: {current_base_url}")
 
         if current_base_url and current_base_url != "https://api.openai.com/v1":
-            print(f"Initializing OpenAI client with custom base URL: {current_base_url}")
+            logger.info(f"使用自定义基础 URL 初始化 OpenAI 客户端: {current_base_url}")
             openai_client = OpenAI(
                 base_url=current_base_url,
                 api_key=current_api_key
             )
         else:
-            print("Initializing OpenAI client with default OpenAI API endpoint.")
+            logger.info("使用默认 OpenAI API 端点初始化 OpenAI 客户端。")
             openai_client = OpenAI(
                 api_key=current_api_key
             )
-        print(f"OpenAI client initialized/re-initialized. Model to be used: {current_model}")
+        logger.info(f"OpenAI 客户端已初始化/重新初始化。将使用的模型: {current_model}")
     except Exception as e:
-        print(f"Error initializing OpenAI client: {e}")
-        print(
-            "Please ensure OpenAI API Key is set and Base URL (if used) is correct via admin panel or environment variables.")
+        logger.error(f"初始化 OpenAI 客户端时出错: {e}")
+        logger.error(
+            "请确保通过管理面板或环境变量设置了 OpenAI API Key，并且基础 URL (如果使用) 正确。")
         openai_client = None
 
 
@@ -54,7 +56,7 @@ def get_openai_client():
     """获取 OpenAI 客户端实例，如果未初始化则尝试初始化。"""
     global openai_client
     if openai_client is None:
-        print("OpenAI client is None, attempting to initialize...")
+        logger.info("OpenAI 客户端为 None，尝试初始化...")
         initialize_openai_client()
     return openai_client
 
@@ -63,10 +65,10 @@ def get_openai_code_review(structured_file_changes):
     """使用 OpenAI API 对结构化的代码变更进行 review (源自 GitHub 版本，通用性较好)"""
     client = get_openai_client()
     if not client:
-        print("OpenAI client not available (not initialized or failed to initialize). Skipping review.")
+        logger.warning("OpenAI 客户端不可用 (未初始化或初始化失败)。跳过审查。")
         return "[]"
     if not structured_file_changes:
-        print("No structured changes provided to review.")
+        logger.info("未提供结构化变更以供审查。")
         return "[]"
 
     system_prompt = """
@@ -108,8 +110,8 @@ def get_openai_code_review(structured_file_changes):
 - context 包含变更区域附近的代码行，用于理解变更背景。
 
 # 输出格式
-1. 严格按照以下 JSON 格式输出一个审查结果JSON数组。数组中的每个对象代表一个具体的审查意见。
-[{"file":"文件路径","lines":{"old":原文件行号或null,"new":新文件行号或null},"category":"问题分类","severity":"严重程度(critical/high/medium/low)","analysis":"结合上下文的具体技术分析(1-2句话简洁说明)","suggestion":"可执行的简短的改进建议(如有代码示例请简洁明了)"}]
+1. 严格按照以下 JSON 格式输出一个审查结果JSON数组。数组中的每个对象代表一个具体的审查意见。不需要反馈小问题和吹毛求疵之处，只检查错误和可能存在安全隐患的地方。
+[{"file":"文件路径","lines":{"old":原文件行号或null,"new":新文件行号或null},"category":"问题分类","severity":"严重程度(critical/high/medium/low)","analysis":"结合上下文的简短分析和审查意见(1-2句话简洁说明)","suggestion":"该位置纠正后的代码"}]
 2. **行号处理规则**：
    - 如果是针对**新增**的代码行提出的建议，请将 `lines.old` 设为 `null`，`lines.new` 设为该新增代码在**新文件**中的行号 (对应输入 `changes` 中的 `new_line`)。
    - 如果是针对**删除**的代码行提出的建议（例如，指出删除不当或有更好替代方案），请将 `lines.old` 设为该删除代码在**原文件**中的行号 (对应输入 `changes` 中的 `old_line`)，`lines.new` 设为 `null`。
@@ -119,8 +121,8 @@ def get_openai_code_review(structured_file_changes):
 3. 输出必须是**完整且合法的 JSON 字符串数组**。绝对不能包含任何 JSON 以外的解释性文字、代码块标记（如 ```json ... ```）、注释或任何其他非 JSON 内容。
 4. **问题分类 (category)**：从 [正确性, 安全性, 性能, 设计, 最佳实践] 中选择最合适的。
 5. **严重程度 (severity)**：根据问题潜在影响评估，从 [critical, high, medium, low] 中选择。
-6. **分析 (analysis)**：简洁说明为什么这是一个问题，结合代码上下文。限制在 100 字以内。
-7. **建议 (suggestion)**：提供清晰、可操作的修改方案。如果包含代码，应简短明了，不需要反馈小问题和吹毛求疵之处，只检查错误和可能存在安全隐患的地方。
+6. **分析 (analysis)**：简洁说明为什么这是一个问题，结合代码上下文。限制在 100 字以内，使用中文。
+7. **建议 (suggestion)**：可直接接受使用的代码。
 8. 如果某个文件没有发现任何问题，请不要为该文件生成任何输出对象。如果所有文件都没有问题，请返回一个空数组 `[]`。
 """
     all_reviews = []
@@ -138,8 +140,8 @@ def get_openai_code_review(structured_file_changes):
         try:
             input_json_string = json.dumps(input_data, indent=2, ensure_ascii=False)
         except TypeError as te:
-            print(f"Error serializing input data for file {file_path}: {te}")
-            print(f"Problematic data structure: {input_data}")
+            logger.error(f"序列化文件 {file_path} 的输入数据时出错: {te}")
+            logger.error(f"有问题的据结构: {input_data}")
             continue
 
         prompt = f"""
@@ -150,11 +152,11 @@ def get_openai_code_review(structured_file_changes):
 ```
 """
         try:
-            print(f"Sending review request for file: {file_path}...")
+            logger.info(f"正在发送文件审查请求: {file_path}...")
             current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
             client = get_openai_client()  # Ensure client is fresh if settings changed
             if not client:
-                print(f"OpenAI client became unavailable before reviewing {file_path}. Skipping.")
+                logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。跳过。")
                 return "[]"  # Or handle per-file error appropriately
 
             response = client.chat.completions.create(
@@ -166,10 +168,10 @@ def get_openai_code_review(structured_file_changes):
                 response_format={"type": "json_object"}
             )
             review_json_str = response.choices[0].message.content.strip()
-            print(f"-------------LLM Output-----------")
-            print(f"LLM Raw Output for {file_path}:")
-            print(f"{review_json_str}")
-            print(f"-------------LLM Output-----------")
+            logger.info(f"-------------LLM 输出-----------")
+            logger.info(f"文件 {file_path} 的 LLM 原始输出:")
+            logger.info(f"{review_json_str}")
+            logger.info(f"-------------LLM 输出-----------")
 
             try:
                 parsed_output = json.loads(review_json_str)
@@ -182,39 +184,39 @@ def get_openai_code_review(structured_file_changes):
                         if isinstance(value, list):
                             reviews_for_file = value
                             found_list = True
-                            print(f"Found review list under key '{key}' in LLM output.")
+                            logger.info(f"在 LLM 输出的键 '{key}' 下找到审查列表。")
                             break
                     if not found_list:
-                        print(
-                            f"Warning: LLM output for {file_path} is a dict, but no list value found. Output: {review_json_str}")
-                        reviews_for_file = [parsed_output]
+                        logger.warning(
+                            f"警告: 文件 {file_path} 的 LLM 输出是一个字典，但未找到列表值。输出: {review_json_str}")
+                        reviews_for_file = [parsed_output]  # Attempt to use the dict as a single review item
                 else:
-                    print(
-                        f"Warning: LLM output for {file_path} is not a JSON list or expected dict. Output: {review_json_str}")
+                    logger.warning(
+                        f"警告: 文件 {file_path} 的 LLM 输出不是 JSON 列表或预期的字典。输出: {review_json_str}")
 
                 valid_reviews_for_file = []
-                for review in reviews_for_file:
+                for review in reviews_for_file:  # Ensure reviews_for_file is iterable
                     if isinstance(review, dict) and all(
                             k in review for k in ["file", "lines", "category", "severity", "analysis", "suggestion"]):
                         if review.get("file") != file_path:
-                            print(f"Warning: Fixing file path in review from '{review.get('file')}' to '{file_path}'")
+                            logger.warning(f"警告: 修正审查中的文件路径从 '{review.get('file')}' 为 '{file_path}'")
                             review["file"] = file_path
                         valid_reviews_for_file.append(review)
                     else:
-                        print(f"Warning: Skipping invalid review item structure for {file_path}: {review}")
+                        logger.warning(f"警告: 跳过文件 {file_path} 的无效审查项结构: {review}")
                 all_reviews.extend(valid_reviews_for_file)
 
             except json.JSONDecodeError as json_e:
-                print(f"Error: Failed to parse JSON response from OpenAI for file {file_path}: {json_e}")
-                print(f"LLM Raw Output was: {review_json_str}")
+                logger.error(f"错误: 解析来自 OpenAI 的文件 {file_path} 的 JSON 响应失败: {json_e}")
+                logger.error(f"LLM 原始输出为: {review_json_str}")
         except Exception as e:
-            print(f"Error getting code review from OpenAI for file {file_path}: {e}")
+            logger.exception(f"从 OpenAI 获取文件 {file_path} 的代码审查时出错:")
 
     try:
         final_json_output = json.dumps(all_reviews, ensure_ascii=False, indent=2)
     except TypeError as te:
-        print(f"Error serializing final review list: {te}")
-        print(f"Problematic list structure: {all_reviews}")
+        logger.error(f"序列化最终审查列表时出错: {te}")
+        logger.error(f"有问题的列表结构: {all_reviews}")
         final_json_output = "[]"
 
     return final_json_output
