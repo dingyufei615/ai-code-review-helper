@@ -7,7 +7,7 @@ def send_to_wecom_bot(summary_content):
     current_wecom_url = app_configs.get("WECOM_BOT_WEBHOOK_URL")
     if not current_wecom_url:
         print("WECOM_BOT_WEBHOOK_URL not configured (via admin or env). Skipping sending message to WeCom bot.")
-         print(f"不需要发送，因为没有配置: {current_wecom_url} ")
+Remove the unnecessary print statement at line 10.
 
         return
 
