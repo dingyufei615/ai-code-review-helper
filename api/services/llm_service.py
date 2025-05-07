@@ -108,8 +108,8 @@ def get_openai_code_review(structured_file_changes):
 - context 包含变更区域附近的代码行，用于理解变更背景。
 
 # 输出格式
-1. 严格按照以下 JSON 格式输出一个审查结果JSON数组。数组中的每个对象代表一个具体的审查意见。
-[{"file":"文件路径","lines":{"old":原文件行号或null,"new":新文件行号或null},"category":"问题分类","severity":"严重程度(critical/high/medium/low)","analysis":"结合上下文的具体技术分析(1-2句话简洁说明)","suggestion":"可执行的简短的改进建议(如有代码示例请简洁明了)"}]
+1. 严格按照以下 JSON 格式输出一个审查结果JSON数组。数组中的每个对象代表一个具体的审查意见。不需要反馈小问题和吹毛求疵之处，只检查错误和可能存在安全隐患的地方。
+[{"file":"文件路径","lines":{"old":原文件行号或null,"new":新文件行号或null},"category":"问题分类","severity":"严重程度(critical/high/medium/low)","analysis":"结合上下文的简短分析和审查意见(1-2句话简洁说明)","suggestion":"该位置纠正后的代码"}]
 2. **行号处理规则**：
    - 如果是针对**新增**的代码行提出的建议，请将 `lines.old` 设为 `null`，`lines.new` 设为该新增代码在**新文件**中的行号 (对应输入 `changes` 中的 `new_line`)。
    - 如果是针对**删除**的代码行提出的建议（例如，指出删除不当或有更好替代方案），请将 `lines.old` 设为该删除代码在**原文件**中的行号 (对应输入 `changes` 中的 `old_line`)，`lines.new` 设为 `null`。
@@ -119,8 +119,8 @@ def get_openai_code_review(structured_file_changes):
 3. 输出必须是**完整且合法的 JSON 字符串数组**。绝对不能包含任何 JSON 以外的解释性文字、代码块标记（如 ```json ... ```）、注释或任何其他非 JSON 内容。
 4. **问题分类 (category)**：从 [正确性, 安全性, 性能, 设计, 最佳实践] 中选择最合适的。
 5. **严重程度 (severity)**：根据问题潜在影响评估，从 [critical, high, medium, low] 中选择。
-6. **分析 (analysis)**：简洁说明为什么这是一个问题，结合代码上下文。限制在 100 字以内。
-7. **建议 (suggestion)**：提供清晰、可操作的修改方案。如果包含代码，应简短明了，不需要反馈小问题和吹毛求疵之处，只检查错误和可能存在安全隐患的地方。
+6. **分析 (analysis)**：简洁说明为什么这是一个问题，结合代码上下文。限制在 100 字以内，使用中文。
+7. **建议 (suggestion)**：可直接接受使用的代码。
 8. 如果某个文件没有发现任何问题，请不要为该文件生成任何输出对象。如果所有文件都没有问题，请返回一个空数组 `[]`。
 """
     all_reviews = []

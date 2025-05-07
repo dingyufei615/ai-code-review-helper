@@ -182,7 +182,7 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
             "project_id": 123,
             "secret": "YOUR_GL_WEBHOOK_SECRET",
             "token": "YOUR_GITLAB_TOKEN",
-            "instance_url": "https://gitlab.example.com" // 可选
+            "instance_url": "https://gitlab.example.com"
         }
         ```
     -   `DELETE /config/gitlab/project/<project_id>`: 删除指定项目的配置。
