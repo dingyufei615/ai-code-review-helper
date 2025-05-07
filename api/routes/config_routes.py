@@ -1,13 +1,16 @@
 from flask import request, jsonify
-import json # 新增导入
+import json 
+import logging 
 from api.app_factory import app
 from api.core_config import (
     app_configs, github_repo_configs, gitlab_project_configs,
     REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY
 )
-import api.core_config as core_config_module # 访问 redis_client 的推荐方式
+import api.core_config as core_config_module  # 访问 redis_client 的推荐方式
 from api.utils import require_admin_key
 from api.services.llm_service import initialize_openai_client
+
+logger = logging.getLogger(__name__)
 
 
 # GitHub Configuration Management
@@ -21,19 +24,19 @@ def add_or_update_github_repo_config():
     token = data.get('token')
     if not repo_full_name or not secret or not token:
         return jsonify({"error": "Missing required fields: repo_full_name, secret, token"}), 400
-    
+
     config_data = {"secret": secret, "token": token}
     github_repo_configs[repo_full_name] = config_data
-    
+
     if core_config_module.redis_client:
         try:
             core_config_module.redis_client.hset(REDIS_GITHUB_CONFIGS_KEY, repo_full_name, json.dumps(config_data))
-            print(f"GitHub configuration for {repo_full_name} saved to Redis.")
+            logger.info(f"GitHub 配置 {repo_full_name} 已保存到 Redis。")
         except Exception as e:
-            print(f"Error saving GitHub config for {repo_full_name} to Redis: {e}")
+            logger.error(f"保存 GitHub 配置 {repo_full_name} 到 Redis 时出错: {e}")
             # 继续执行，至少内存中已更新
 
-    print(f"GitHub configuration added/updated for repository: {repo_full_name}")
+    logger.info(f"为仓库添加/更新了 GitHub 配置: {repo_full_name}")
     return jsonify({"message": f"Configuration for GitHub repository {repo_full_name} added/updated."}), 200
 
 
@@ -45,11 +48,11 @@ def delete_github_repo_config(repo_full_name):
         if core_config_module.redis_client:
             try:
                 core_config_module.redis_client.hdel(REDIS_GITHUB_CONFIGS_KEY, repo_full_name)
-                print(f"GitHub configuration for {repo_full_name} deleted from Redis.")
+                logger.info(f"GitHub 配置 {repo_full_name} 已从 Redis 删除。")
             except Exception as e:
-                print(f"Error deleting GitHub config for {repo_full_name} from Redis: {e}")
+                logger.error(f"从 Redis 删除 GitHub 配置 {repo_full_name} 时出错: {e}")
                 # 继续执行，至少内存中已删除
-        print(f"GitHub configuration deleted for repository: {repo_full_name}")
+        logger.info(f"为仓库删除了 GitHub 配置: {repo_full_name}")
         return jsonify({"message": f"Configuration for GitHub repository {repo_full_name} deleted."}), 200
     return jsonify({"error": f"Configuration for GitHub repository {repo_full_name} not found."}), 404
 
@@ -71,24 +74,25 @@ def add_or_update_gitlab_project_config():
     token = data.get('token')
     instance_url = data.get('instance_url')  # 新增
 
-    if not project_id or not secret or not token: # instance_url 是可选的
+    if not project_id or not secret or not token:  # instance_url 是可选的
         return jsonify({"error": "Missing required fields: project_id, secret, token"}), 400
-    
+
     project_id_str = str(project_id)
     config_data = {"secret": secret, "token": token}
-    if instance_url: # 只有当用户提供时才存储
+    if instance_url:  # 只有当用户提供时才存储
         config_data["instance_url"] = instance_url
-    
+
     gitlab_project_configs[project_id_str] = config_data
     if core_config_module.redis_client:
         try:
             core_config_module.redis_client.hset(REDIS_GITLAB_CONFIGS_KEY, project_id_str, json.dumps(config_data))
-            print(f"GitLab configuration for project {project_id_str} saved to Redis.")
+            logger.info(f"GitLab 配置 {project_id_str} 已保存到 Redis。")
         except Exception as e:
-            print(f"Error saving GitLab config for project {project_id_str} to Redis: {e}")
+            logger.error(f"保存 GitLab 配置 {project_id_str} 到 Redis 时出错: {e}")
             # 继续执行，至少内存中已更新
-            
-    print(f"GitLab configuration added/updated for project ID: {project_id_str}. Instance URL: {instance_url if instance_url else 'Default'}")
+
+    logger.info(
+        f"为项目 ID 添加/更新了 GitLab 配置: {project_id_str}。实例 URL: {instance_url if instance_url else '默认'}")
     return jsonify({"message": f"Configuration for GitLab project {project_id_str} added/updated."}), 200
 
 
@@ -101,11 +105,11 @@ def delete_gitlab_project_config(project_id):
         if core_config_module.redis_client:
             try:
                 core_config_module.redis_client.hdel(REDIS_GITLAB_CONFIGS_KEY, project_id_str)
-                print(f"GitLab configuration for project {project_id_str} deleted from Redis.")
+                logger.info(f"GitLab 配置 {project_id_str} 已从 Redis 删除。")
             except Exception as e:
-                print(f"Error deleting GitLab config for project {project_id_str} from Redis: {e}")
+                logger.error(f"从 Redis 删除 GitLab 配置 {project_id_str} 时出错: {e}")
                 # 继续执行，至少内存中已删除
-        print(f"GitLab configuration deleted for project ID: {project_id_str}")
+        logger.info(f"为项目 ID 删除了 GitLab 配置: {project_id_str}")
         return jsonify({"message": f"Configuration for GitLab project {project_id_str} deleted."}), 200
     return jsonify({"error": f"Configuration for GitLab project {project_id_str} not found."}), 404
 
@@ -145,11 +149,11 @@ def update_global_settings():
                     openai_config_changed = True
 
     if openai_config_changed:
-        print("OpenAI related configuration updated, re-initializing OpenAI client...")
+        logger.info("OpenAI 相关配置已更新，正在重新初始化 OpenAI 客户端...")
         initialize_openai_client()
 
     if updated_keys:
-        print(f"Global settings updated for keys: {', '.join(updated_keys)}")
+        logger.info(f"全局设置已更新，涉及键: {', '.join(updated_keys)}")
         # Here you might want to persist app_configs to a file or database if needed beyond memory storage
         return jsonify({"message": f"Global settings updated for: {', '.join(updated_keys)}"}), 200
     else:

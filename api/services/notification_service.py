@@ -1,12 +1,14 @@
 import requests
 from api.core_config import app_configs
+import logging
 
+logger = logging.getLogger(__name__)
 
 def send_to_wecom_bot(summary_content):
     """将 Code Review 摘要发送到企业微信机器人 (源自 GitHub 版本)"""
     current_wecom_url = app_configs.get("WECOM_BOT_WEBHOOK_URL")
     if not current_wecom_url:
-        print("WECOM_BOT_WEBHOOK_URL not configured (via admin or env). Skipping sending message to WeCom bot.")
+        logger.info("WECOM_BOT_WEBHOOK_URL 未配置 (通过管理面板或环境变量)。跳过发送消息到企业微信机器人。")
         return
 
     payload = {
@@ -20,10 +22,10 @@ def send_to_wecom_bot(summary_content):
         response = requests.post(current_wecom_url, json=payload, headers=headers, timeout=15)
         response.raise_for_status()
         if response.json().get("errcode") == 0:
-            print("Successfully sent summary to WeCom bot.")
+            logger.info("成功发送摘要到企业微信机器人。")
         else:
-            print(f"Error sending summary to WeCom bot: {response.text}")
+            logger.error(f"发送摘要到企业微信机器人时出错: {response.text}")
     except requests.exceptions.RequestException as e:
-        print(f"Error sending summary message to WeCom bot: {e}")
+        logger.error(f"发送摘要消息到企业微信机器人时出错: {e}")
     except Exception as e:
-        print(f"An unexpected error occurred while sending summary to WeCom bot: {e}")
+        logger.error(f"发送摘要到企业微信机器人时发生意外错误: {e}")
