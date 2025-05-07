@@ -3,10 +3,12 @@ from api.core_config import app_configs
 
 
 def send_to_wecom_bot(summary_content):
-    """将 Code Review 摘要发送到企业微信机器人 (源自 GitHub 版本)"""
+    """将 Code Review 摘要发送到企业微信机器人 """
     current_wecom_url = app_configs.get("WECOM_BOT_WEBHOOK_URL")
     if not current_wecom_url:
         print("WECOM_BOT_WEBHOOK_URL not configured (via admin or env). Skipping sending message to WeCom bot.")
+         print(f"不需要发送，因为没有配置: {current_wecom_url} ")
+
         return
 
     payload = {
