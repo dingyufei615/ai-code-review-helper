@@ -1,10 +1,10 @@
 from flask import request, abort, jsonify
 import json
-import logging 
+import logging
 from api.app_factory import app
 from api.core_config import (
     github_repo_configs, gitlab_project_configs, app_configs,
-    is_commit_processed, mark_commit_as_processed
+    is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
 )
 from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import get_github_pr_changes, add_github_pr_comment, get_gitlab_mr_changes, \
@@ -80,7 +80,15 @@ def github_webhook():
 
     action = payload_data.get('action')
     pr_data = payload_data.get('pull_request', {})
-    pr_state = pr_data.get('state')
+    pr_state = pr_data.get('state') # 'open', 'closed'
+    pr_merged = pr_data.get('merged', False) # True if merged
+
+    # 如果 PR 被关闭（且未合并，因为合并的 PR 也是 closed 状态）或已合并，则清理 Redis 记录
+    if action == 'closed':
+        pull_number_str = str(pr_data.get('number'))
+        logger.info(f"GitHub: PR {repo_full_name}#{pull_number_str} 已关闭 (合并状态: {pr_merged})。正在清理 Redis 记录...")
+        remove_processed_commit_entries_for_pr_mr('github', repo_full_name, pull_number_str)
+        return f"PR {pull_number_str} 已关闭，记录已清理。", 200
 
     if pr_state != 'open' or action not in ['opened', 'reopened', 'synchronize']:
         logger.info(f"GitHub: 忽略 PR 操作 '{action}' 或状态 '{pr_state}'。")
@@ -233,9 +241,19 @@ def gitlab_webhook():
     # GitLab MR actions: open, reopen, update, close, merge, approve, unapprove
     # We are interested in 'open', 'reopened', and 'update' (if source branch changes)
     # 'update' action is triggered when new commits are pushed to the source branch of an open MR.
-    if mr_state not in ['opened', 'reopened'] and mr_action != 'update':
-        logger.info(f"GitLab: 忽略 MR 操作 '{mr_action}' 或状态 '{mr_state}'。")
-        return "MR 操作/状态已忽略", 200
+    # GitLab MR actions: 'open', 'reopen', 'update', 'close', 'merge', 'approve', 'unapprove'
+    # 'state' can be 'opened', 'closed', 'merged', 'locked'
+
+    # 如果 MR 被关闭或合并，则清理 Redis 记录
+    if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
+        mr_iid_str = str(mr_iid)
+        logger.info(f"GitLab: MR {project_id_str}#{mr_iid_str} 已 {mr_action if mr_action in ['close', 'merge'] else mr_state}。正在清理 Redis 记录...")
+        remove_processed_commit_entries_for_pr_mr('gitlab', project_id_str, mr_iid_str)
+        return f"MR {mr_iid_str} 已 {mr_action if mr_action in ['close', 'merge'] else mr_state}，记录已清理。", 200
+
+    if mr_state not in ['opened', 'reopened'] and mr_action != 'update': # 确保只处理开放和更新的MR进行审查
+        logger.info(f"GitLab: 忽略 MR 操作 '{mr_action}' 或状态 '{mr_state}' (非审查触发条件)。")
+        return "MR 操作/状态已忽略 (非审查触发条件)", 200
 
     # For 'update' action, ensure it's not just a metadata update without new commits.
     # The 'last_commit' object changes when new code is pushed.

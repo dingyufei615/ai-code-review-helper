@@ -140,6 +140,40 @@ def mark_commit_as_processed(vcs_type: str, identifier: str, pr_mr_id: str, comm
         logger.error(f"标记提交 {key} 为已处理时 Redis 出错: {e}")
 
 
+def remove_processed_commit_entries_for_pr_mr(vcs_type: str, identifier: str, pr_mr_id: str):
+    """当 PR/MR 关闭或合并时，移除其所有相关的已处理 commit 条目。"""
+    if not redis_client:
+        logger.warning("Redis 客户端不可用，无法移除已处理的提交条目。")
+        return
+
+    pr_mr_key_prefix = f"{vcs_type}:{identifier}:{str(pr_mr_id)}:"
+    keys_to_remove = []
+    removed_count = 0
+
+    try:
+        # 使用 SSCAN 迭代集合成员以避免阻塞
+        # 注意：SSCAN 在 Python redis 库中返回一个迭代器
+        for member_bytes in redis_client.sscan_iter(REDIS_PROCESSED_COMMITS_SET_KEY):
+            member_str = member_bytes.decode('utf-8')
+            if member_str.startswith(pr_mr_key_prefix):
+                keys_to_remove.append(member_str)
+
+        if keys_to_remove:
+            removed_count = redis_client.srem(REDIS_PROCESSED_COMMITS_SET_KEY, *keys_to_remove)
+            logger.info(
+                f"为 {vcs_type} {identifier} #{pr_mr_id} 从 Redis 中移除了 {removed_count} 个已处理的 commit 条目。")
+        else:
+            logger.info(
+                f"在 Redis 中未找到与 {vcs_type} {identifier} #{pr_mr_id} 相关的已处理 commit 条目。")
+
+    except redis.exceptions.RedisError as e:
+        logger.error(
+            f"为 {vcs_type} {identifier} #{pr_mr_id} 移除已处理的 commit 条目时 Redis 出错: {e}")
+    except Exception as e:
+        logger.error(
+            f"为 {vcs_type} {identifier} #{pr_mr_id} 移除已处理的 commit 条目时发生意外错误: {e}")
+
+
 # --- 仓库/项目特定配置存储 (内存字典, 会被 Redis 数据填充) ---
 # GitHub 仓库配置
 # key: repository_full_name (string, e.g., "owner/repo"), value: {"secret": "webhook_secret", "token": "github_access_token"}
