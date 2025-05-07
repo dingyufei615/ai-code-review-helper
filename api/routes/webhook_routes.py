@@ -169,6 +169,12 @@ def github_webhook():
 """
         send_to_wecom_bot(summary_content)
 
+    # 标记此 commit 为已处理
+    if head_sha: # 确保 head_sha 存在
+        mark_commit_as_processed('github', repo_full_name, str(pull_number), head_sha)
+    else:
+        print(f"Warning: head_sha was empty for GitHub PR {repo_full_name}#{pull_number}. Cannot mark as processed.")
+
     return "GitHub Webhook processed successfully", 200
 
 
