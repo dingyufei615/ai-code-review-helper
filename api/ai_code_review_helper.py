@@ -5,10 +5,11 @@ import logging
 from api.app_factory import app
 from api.core_config import (
     SERVER_HOST, SERVER_PORT, app_configs, ADMIN_API_KEY,
-    init_redis_client, load_configs_from_redis, redis_client
+    init_redis_client, load_configs_from_redis
 )
-from api.services.llm_service import initialize_openai_client, openai_client
-from api.routes import config_routes, webhook_routes
+import api.core_config as core_config_module
+from api.services.llm_service import initialize_openai_client
+import api.services.llm_service as llm_service_module
 
 
 # --- Admin Page ---
@@ -63,13 +64,13 @@ if __name__ == '__main__':
         logger.info(f"企业微信机器人通知已启用，URL: {url_parts[0]}?key=...{key_preview}")
 
     # Check openai_client status after initial attempt
-    if not openai_client:  # openai_client is imported from .services.llm_service
+    if not llm_service_module.openai_client:  # Check via module attribute
         logger.warning(
             "警告: OpenAI 客户端无法根据当前设置初始化。在通过管理面板或环境变量提供有效的 OpenAI 配置之前，AI 审查功能将无法工作。")
 
     logger.info("--- Redis 状态 ---")
     if app_configs.get("REDIS_HOST"):
-        if redis_client:
+        if core_config_module.redis_client:  # Check via module attribute
             logger.info(f"Redis 连接: 已连接到 {app_configs.get('REDIS_HOST')}:{app_configs.get('REDIS_PORT')}")
         else:
             logger.warning(
