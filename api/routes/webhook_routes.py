@@ -8,6 +8,32 @@ from api.services.llm_service import get_openai_code_review
 from api.services.notification_service import send_to_wecom_bot
 
 
+# --- Helper Functions ---
+def _post_no_issues_comment(vcs_type, comment_function, **comment_args_for_func):
+    """当没有审查建议时，发表一个通用的“全部通过”评论到 PR/MR。"""
+    print(f"{vcs_type.capitalize()}: No review suggestions from AI. Posting 'all clear' comment.")
+    overall_status_file = f"Overall {'PR' if vcs_type == 'github' else 'MR'} Status"
+    no_issues_review = {
+        "file": overall_status_file,
+        "severity": "INFO",
+        "category": "General",
+        "analysis": "AI Code Review 已完成，所有检查均已通过，无审查建议。",
+        "suggestion": "Looks good!",
+        "lines": {}  # 确保这是一个通用的 PR/MR 评论
+    }
+    # comment_function 需要 'review' 作为命名参数
+    comment_function(review=no_issues_review, **comment_args_for_func)
+
+def _get_wecom_summary_line(num_reviews, vcs_type):
+    """为企业微信通知生成摘要行。"""
+    entity_name = "Pull Request" if vcs_type == 'github' else "Merge Request"
+    if num_reviews == 0:
+        return "AI Code Review 已完成，所有检查均已通过，无审查建议。"
+    else:
+        return f"AI Code Review 已完成，共生成 {num_reviews} 条审查建议。请前往 {entity_name} 查看详情。"
+# --- End Helper Functions ---
+
+
 @app.route('/github_webhook', methods=['POST'])
 def github_webhook():
     """处理 GitHub Webhook 请求"""
@@ -112,24 +138,19 @@ def github_webhook():
                 comments_failed += 1
         print(f"GitHub: Finished adding comments: {comments_added} succeeded, {comments_failed} failed.")
     else:
-        print("GitHub: No review suggestions from AI. Posting 'all clear' comment.")
-        no_issues_review = {
-            "file": "Overall PR Status",
-            "severity": "INFO",
-            "category": "General",
-            "analysis": "AI Code Review 已完成，无审查建议。",
-            "suggestion": "Looks good!",
-            "lines": {}  # Ensures it's a general PR comment
-        }
-        add_github_pr_comment(owner, repo_name, pull_number, access_token, no_issues_review, head_sha)
+        _post_no_issues_comment(
+            vcs_type='github',
+            comment_function=add_github_pr_comment,
+            owner=owner,
+            repo_name=repo_name,
+            pull_number=pull_number,
+            access_token=access_token,
+            head_sha=head_sha
+        )
 
     if app_configs.get("WECOM_BOT_WEBHOOK_URL"):
         print("GitHub: Sending summary notification to WeCom bot...")
-        if not reviews: # reviews is the list of parsed review items
-            review_summary_line = "AI Code Review 已完成，无审查建议。"
-        else:
-            review_summary_line = f"AI Code Review 已完成，共生成 {len(reviews)} 条审查建议。请前往 Pull Request 查看详情。"
-
+        review_summary_line = _get_wecom_summary_line(len(reviews), 'github')
         summary_content = f"""**AI代码审查完成 (GitHub)**
 
 > 仓库: [{repo_full_name}]({repo_web_url})
@@ -256,16 +277,14 @@ def gitlab_webhook():
                 comments_failed += 1
         print(f"GitLab: Finished adding comments: {comments_added} succeeded, {comments_failed} failed.")
     else:
-        print("GitLab: No review suggestions from AI. Posting 'all clear' comment.")
-        no_issues_review = {
-            "file": "Overall MR Status",
-            "severity": "INFO",
-            "category": "General",
-            "analysis": "AI code review completed. All checks passed, no suggestions found.",
-            "suggestion": "Looks good!",
-            "lines": {}  # Ensures it's a general MR comment
-        }
-        add_gitlab_mr_comment(project_id_str, mr_iid, access_token, no_issues_review, position_info)
+        _post_no_issues_comment(
+            vcs_type='gitlab',
+            comment_function=add_gitlab_mr_comment,
+            project_id=project_id_str,
+            mr_iid=mr_iid,
+            access_token=access_token,
+            position_info=position_info
+        )
 
     if app_configs.get("WECOM_BOT_WEBHOOK_URL"):
         print("GitLab: Sending summary notification to WeCom bot...")
@@ -273,11 +292,7 @@ def gitlab_webhook():
         mr_source_branch = mr_attrs.get('source_branch')
         mr_target_branch = mr_attrs.get('target_branch')
 
-        if not reviews: # reviews is the list of parsed review items
-            review_summary_line = "AI Code Review 已完成，无审查建议。"
-        else:
-            review_summary_line = f"AI分析完成，共生成 {len(reviews)} 条审查建议。请前往 Merge Request 查看详情。"
-
+        review_summary_line = _get_wecom_summary_line(len(reviews), 'gitlab')
         summary_content = f"""**AI代码审查完成 (GitLab)**
 
 > 项目: [{project_name}]({project_web_url})
