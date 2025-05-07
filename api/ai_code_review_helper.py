@@ -10,6 +10,8 @@ from api.core_config import (
 import api.core_config as core_config_module
 from api.services.llm_service import initialize_openai_client
 import api.services.llm_service as llm_service_module
+import api.routes.config_routes
+import api.routes.webhook_routes
 
 
 # --- Admin Page ---
