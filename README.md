@@ -129,7 +129,7 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 
 ### 2. 管理面板
 
-启动服务后，可以通过浏览器访问管理面板：`http://<your_server_host>:<your_server_port>/admin` (例如 `http://localhost:8088/admin`)。
+启动服务后，可以通过浏览器访问管理面板：`http://<your_server_host>:<your_server_port>/admin` (例如 `http://localhost:8088/admin`)。（为方便调试，管理页面写的较为简单）
 
 首次访问或 Cookie 失效时，会提示输入 `Admin API Key`。
 
