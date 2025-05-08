@@ -15,6 +15,9 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 - **通知服务**: 支持将 Code Review 完成的摘要信息发送到企业微信机器人。
 - **防止重复处理**: 利用 Redis 记录已处理的 Commit SHA，避免对同一代码变更（如 PR 的 `synchronize` 事件）重复进行审查。
 - **友好提示**: 当 AI 未发现代码问题时，会自动在 PR/MR 中发表表示检查通过的评论。
+- **AI 审查结果存储与查阅**: AI 生成的审查结果会存储在 Redis 中（如果已配置），并可通过管理面板查阅历史审查记录。
+- **自动清理**: 当 PR/MR 被关闭或合并时，相关的已处理 Commit 记录和存储的 AI 审查结果会自动从 Redis 中清理，以节省空间。
+- **结果有效期**: 存储在 Redis 中的 AI 审查结果具有预设的有效期（例如7天），过期后自动删除。
 - **灵活部署**: 可以作为独立的 Web 服务运行，或通过 Docker 容器部署。
 
 ## 系统架构概览
@@ -147,9 +150,14 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
     -   配置 `OpenAI API Base URL`、`OpenAI API Key` 和 `OpenAI Model`。这些设置会覆盖环境变量中的对应值，并优先于环境变量。
 -   **通知配置**:
     -   配置 `企业微信机器人 Webhook URL`。
+-   **API 密钥设置**:
+    -   用于设置和管理访问管理面板所需的 `Admin API Key` (通常在首次使用时通过 Cookie 存储)。
+-   **AI 审查记录**:
+    -   查看所有已进行 AI 审查的 Pull Request / Merge Request 列表。
+    -   点击列表中的条目，可以查看该 PR/MR 下所有 Commits 的详细 AI 审查意见。审查意见按 Commit 分组展示，包含文件路径、行号、问题分类、严重性、分析和建议代码。
 
 **配置持久化**:
-- 如果配置了 Redis (`REDIS_HOST` 等环境变量)，通过管理面板或 API 进行的 GitHub 仓库配置和 GitLab 项目配置将**保存到 Redis** 中，服务重启后依然有效。
+- 如果配置了 Redis (`REDIS_HOST` 等环境变量)，通过管理面板或 API 进行的 GitHub 仓库配置和 GitLab 项目配置将**保存到 Redis** 中，服务重启后依然有效。已处理的 Commit SHA 记录和 AI 审查结果也会存储在 Redis 中。
 - 全局应用配置（如 LLM 设置、通知设置）通过管理面板或 API 修改后，目前仅在**内存中生效**，并优先于环境变量。服务重启后，这些全局配置会恢复到环境变量指定的值。为了持久化全局配置，建议主要通过环境变量进行设置。
 
 ### 3. 配置 API
@@ -188,6 +196,10 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
         }
         ```
     -   `DELETE /config/gitlab/project/<project_id>`: 删除指定项目的配置。
+-   **AI 审查结果 API**:
+    -   `GET /config/review_results/list`: 列出所有已存储 AI 审查结果的 PR/MR 摘要信息。返回一个包含 `vcs_type`, `identifier`, `pr_mr_id`, 和 `display_name` 的对象列表。
+    -   `GET /config/review_results/<vcs_type>/<identifier>/<pr_mr_id>`: 获取特定 PR/MR 的所有审查结果。结果按 Commit SHA 分组。对于 GitLab，还会包含 `project_name` 和 `display_identifier`。
+    -   `GET /config/review_results/<vcs_type>/<identifier>/<pr_mr_id>?commit_sha=<sha>`: 获取特定 PR/MR 下特定 Commit 的审查结果。
 
 ## 使用方法
 
@@ -240,6 +252,8 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 -   `/github_webhook`: GitHub Webhook 接收端点。
 -   `/gitlab_webhook`: GitLab Webhook 接收端点。
 -   `/config/*`: (如上所述) 配置管理 API 端点，受 `X-Admin-API-Key` 保护。
+    -   `/config/review_results/list`: 列出已审查的 PR/MR。
+    -   `/config/review_results/<vcs_type>/<identifier>/<pr_mr_id>`: 获取特定 PR/MR 的审查详情。
 
 ## 注意事项
 
@@ -247,8 +261,9 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 -   **LLM 成本**: 使用 OpenAI 等商业 LLM 服务会产生费用，请关注您的 API 调用量和相关成本。
 -   **错误处理与日志**: 应用会在控制台输出详细的日志信息，包括请求处理、API 调用、错误等。请检查日志以进行故障排除。
 -   **配置持久化**:
-    - GitHub 和 GitLab 的仓库/项目配置（如 `secret`, `token`, `instance_url`）在配置 Redis 后，会通过管理面板或 API 持久化到 Redis。
-    - 全局应用配置（如 OpenAI Key, WeCom URL）通过管理面板或 API 修改后，当前版本仅在内存中生效，并优先于环境变量。服务重启后，这些全局配置会从环境变量重新加载。建议通过环境变量管理核心全局配置。
+    -   GitHub 和 GitLab 的仓库/项目配置（如 `secret`, `token`, `instance_url`）在配置 Redis 后，会通过管理面板或 API 持久化到 Redis。
+    -   AI 审查结果和已处理的 Commit SHA 记录在配置 Redis 后，也会持久化到 Redis。审查结果具有预设的 TTL (Time-To-Live)，并且在 PR/MR 关闭或合并时会自动清理相关记录，以有效管理存储空间。
+    -   全局应用配置（如 OpenAI Key, WeCom URL）通过管理面板或 API 修改后，当前版本仅在内存中生效，并优先于环境变量。服务重启后，这些全局配置会从环境变量重新加载。建议通过环境变量管理核心全局配置。
 
 ## 贡献
 本代码 90% 由[Aider](https://github.com/Aider-AI/aider) + Gemini协同完成。
