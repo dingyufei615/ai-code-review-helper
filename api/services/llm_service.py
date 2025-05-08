@@ -231,7 +231,6 @@ def get_openai_code_review(structured_file_changes):
             continue
 
         prompt = f"""
-请根据之前定义的角色、审查维度和输出格式，对以下文件变更进行审查。请务必严格按照要求的 JSON 数组格式返回审查结果，不要包含任何其他文字。
 
 ```json
 {input_json_string}

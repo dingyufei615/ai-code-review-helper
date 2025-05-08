@@ -13,10 +13,33 @@ from api.services.vcs_service import get_github_pr_changes, add_github_pr_commen
 from api.services.llm_service import get_openai_code_review
 from api.services.notification_service import send_to_wecom_bot
 
-logger = logging.getLogger(__name__)  # 新增 logger
+logger = logging.getLogger(__name__)
 
 
 # --- Helper Functions ---
+def _save_review_results_and_log(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str, review_json_string: str, project_name_for_gitlab: str = None):
+    """统一保存审查结果到 Redis 并记录日志。"""
+    if not commit_sha:
+        logger.warning(f"警告: {vcs_type.capitalize()} {identifier}#{pr_mr_id} 的 commit_sha 为空。无法保存审查结果。")
+        return
+
+    try:
+        if vcs_type == 'github':
+            save_review_results(vcs_type, identifier, pr_mr_id, commit_sha, review_json_string)
+        elif vcs_type == 'gitlab':
+            save_review_results(vcs_type, identifier, pr_mr_id, commit_sha, review_json_string, project_name=project_name_for_gitlab)
+        else:
+            logger.error(f"未知的 VCS 类型 '{vcs_type}'，无法保存审查结果。")
+            return
+        
+        # 日志记录已在 save_review_results 内部处理，这里可以不再重复记录成功信息，
+        # 但保留一个简短的调用日志可能有用。
+        logger.info(f"{vcs_type.capitalize()}: 审查结果保存调用完成，针对 commit {commit_sha}。")
+
+    except Exception as e:
+        # save_review_results 内部已经有错误日志，这里可以捕获更通用的错误或决定是否需要额外日志
+        logger.error(f"调用 save_review_results 时发生意外错误 ({vcs_type} {identifier}#{pr_mr_id}, Commit: {commit_sha}): {e}")
+
 def _post_no_issues_comment(vcs_type, comment_function, **comment_args_for_func):
     """当没有审查建议时，发表一个通用的“全部通过”评论到 PR/MR。"""
     logger.info(f"{vcs_type.capitalize()}: AI 无审查建议。将发表 '全部通过' 评论。")
@@ -135,11 +158,14 @@ def github_webhook():
     logger.info(f"{review_result_json}")
     logger.info("--- GitHub 审查 JSON 结束 ---")
 
-    # 保存审查结果到 Redis
-    if head_sha: # 确保 head_sha 存在
-        save_review_results('github', repo_full_name, str(pull_number), head_sha, review_result_json)
-    else:
-        logger.warning(f"警告: GitHub PR {repo_full_name}#{pull_number} 的 head_sha 为空。无法保存审查结果。")
+    # 使用新的辅助函数保存审查结果
+    _save_review_results_and_log(
+        vcs_type='github',
+        identifier=repo_full_name,
+        pr_mr_id=str(pull_number),
+        commit_sha=head_sha,
+        review_json_string=review_result_json
+    )
 
     reviews = []
     try:
@@ -302,17 +328,21 @@ def gitlab_webhook():
     logger.info(f"{review_result_json}")
     logger.info("--- GitLab 审查 JSON 结束 ---")
 
-    # 保存审查结果到 Redis
-    # 使用从 webhook payload 中获取的 head_sha_payload，因为它更直接对应于触发事件的 commit。
+    # 确定用于保存的 commit SHA
     current_commit_sha_for_saving = head_sha_payload
     if not current_commit_sha_for_saving and position_info and position_info.get("head_sha"):
         current_commit_sha_for_saving = position_info.get("head_sha")
-        logger.info(f"GitLab: 使用来自 position_info 的 head_sha ({current_commit_sha_for_saving}) 保存审查结果。")
+        logger.info(f"GitLab: 使用来自 position_info 的 head_sha ({current_commit_sha_for_saving}) 进行后续操作。")
     
-    if current_commit_sha_for_saving:
-        save_review_results('gitlab', project_id_str, str(mr_iid), current_commit_sha_for_saving, review_result_json, project_name=project_name_from_payload)
-    else:
-        logger.warning(f"警告: GitLab MR {project_id_str}#{mr_iid} 的 commit SHA 未知。无法保存审查结果。")
+    # 使用新的辅助函数保存审查结果
+    _save_review_results_and_log(
+        vcs_type='gitlab',
+        identifier=project_id_str,
+        pr_mr_id=str(mr_iid),
+        commit_sha=current_commit_sha_for_saving, # 使用已确定的 SHA
+        review_json_string=review_result_json,
+        project_name_for_gitlab=project_name_from_payload
+    )
 
     reviews = []
     try:

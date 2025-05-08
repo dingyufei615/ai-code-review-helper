@@ -4,235 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Code Review Helper - 管理面板</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 0; /* Adjusted for full-page layout */
-            background-color: #f4f7f9;
-            color: #333;
-            display: flex; /* For sidebar layout */
-            min-height: 100vh;
-        }
-
-        .sidebar {
-            width: 220px;
-            background-color: #2c3e50;
-            color: #fff;
-            padding: 20px;
-            height: 100vh; /* Full height */
-            position: fixed; /* Fixed sidebar */
-            top: 0;
-            left: 0;
-        }
-
-        .sidebar h1 {
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            color: #fff;
-            border-bottom: 1px solid #34495e;
-            padding-bottom: 10px;
-        }
-
-        .sidebar ul {
-            list-style: none;
-            padding: 0;
-        }
-
-        .sidebar ul li a {
-            display: block;
-            padding: 10px 15px;
-            color: #ecf0f1;
-            text-decoration: none;
-            border-radius: 4px;
-            margin-bottom: 5px;
-            transition: background-color 0.3s ease;
-        }
-
-        .sidebar ul li a:hover, .sidebar ul li a.active {
-            background-color: #3498db;
-        }
-
-        .main-content {
-            margin-left: 220px; /* Same as sidebar width */
-            padding: 20px;
-            width: calc(100% - 220px); /* Full width minus sidebar */
-            background-color: #f4f7f9; /* Ensure content area has its own background */
-        }
-
-        .container { /* This will now wrap content within main-content */
-            max-width: 1000px; /* Or adjust as needed */
-            margin: 0 auto;
-            background-color: #fff;
-            padding: 25px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        h1 /* Page title in main content */, h2 {
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-            margin-top: 0;
-        }
-
-        h2 {
-            margin-top: 30px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-            color: #555;
-        }
-
-        input[type="text"], input[type="password"], input[type="number"] {
-            width: calc(100% - 22px);
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
-            font-size: 1em;
-        }
-
-        button {
-            background-color: #3498db;
-            color: white;
-            padding: 10px 18px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1em;
-            transition: background-color 0.3s ease;
-        }
-
-        button:hover {
-            background-color: #2980b9;
-        }
-
-        button.delete-btn {
-            background-color: #e74c3c;
-            margin-left: 10px;
-        }
-
-        button.delete-btn:hover {
-            background-color: #c0392b;
-        }
-
-        .config-section {
-            margin-bottom: 30px;
-            padding: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 5px;
-            background-color: #fdfdfd;
-        }
-
-        .config-list {
-            list-style-type: none;
-            padding: 0;
-        }
-
-        .config-list li {
-            background-color: #ecf0f1;
-            padding: 12px;
-            margin-bottom: 8px;
-            border-radius: 4px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .config-list li span {
-            word-break: break-all;
-        }
-
-        .api-key-section {
-            margin-bottom: 25px;
-            padding: 15px;
-            background-color: #e8f4fd;
-            border: 1px solid #bde0fe;
-            border-radius: 5px;
-        }
-
-        .status-message {
-            padding: 10px;
-            margin-top: 15px;
-            border-radius: 4px;
-            font-weight: bold;
-        }
-
-        .status-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .status-error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .content-section { /* Class for sections to be shown/hidden */
-            display: none; /* Hidden by default */
-        }
-
-        .content-section.active {
-            display: block; /* Shown when active */
-        }
-
-        /* Styles for AI Review Results Section */
-        #aiReviewResultsSection .pr-mr-list {
-            list-style-type: none;
-            padding: 0;
-        }
-        #aiReviewResultsSection .pr-mr-list li {
-            padding: 10px;
-            border: 1px solid #eee;
-            margin-bottom: 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            background-color: #f9f9f9;
-        }
-        #aiReviewResultsSection .pr-mr-list li:hover {
-            background-color: #e9e9e9;
-        }
-        #aiReviewResultsSection .commit-details {
-            margin-top: 15px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #fdfdfd;
-        }
-        #aiReviewResultsSection .commit-details h4 {
-            margin-top: 0;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 5px;
-        }
-        #aiReviewResultsSection .review-item {
-            margin-bottom: 10px;
-            padding: 10px;
-            border: 1px solid #e0e0e0;
-            border-radius: 3px;
-            background-color: #fff;
-        }
-        #aiReviewResultsSection .review-item p {
-            margin: 5px 0;
-        }
-        #aiReviewResultsSection .review-item strong {
-            color: #333;
-        }
-        #aiReviewResultsSection .review-item pre {
-            background-color: #f0f0f0;
-            padding: 8px;
-            border-radius: 3px;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin_styles.css') }}">
 </head>
 <body>
 <div class="sidebar">
@@ -827,11 +599,17 @@
         const data = await fetchData(url);
 
         if (data && data.all_reviews_by_commit) {
-            // 使用 data.display_identifier (由后端提供，对于GitLab会是项目名) 来显示标题
             const displayTitleIdentifier = data.display_identifier || identifier;
-            reviewDetailsContainer.innerHTML = `<h3>${vcsType.toUpperCase()}: ${displayTitleIdentifier} #${prMrId} 的审查结果</h3>`;
+            reviewDetailsContainer.innerHTML = ''; // 清空之前的内容
+
+            const titleElement = document.createElement('h3');
+            titleElement.textContent = `${vcsType.toUpperCase()}: ${displayTitleIdentifier} #${prMrId} 的审查结果`;
+            reviewDetailsContainer.appendChild(titleElement);
+
             if (Object.keys(data.all_reviews_by_commit).length === 0) {
-                reviewDetailsContainer.innerHTML += '<p>此 PR/MR 没有找到具体的审查评论记录。</p>';
+                const noReviewsPara = document.createElement('p');
+                noReviewsPara.textContent = '此 PR/MR 没有找到具体的审查评论记录。';
+                reviewDetailsContainer.appendChild(noReviewsPara);
                 return;
             }
 

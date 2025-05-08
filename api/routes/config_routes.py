@@ -180,8 +180,7 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
     可以通过查询参数 ?commit_sha=<sha> 来获取特定 commit 的结果。
     """
     commit_sha = request.args.get('commit_sha', None)
-    
-    # 验证 vcs_type 是否有效
+
     if vcs_type not in ['github', 'gitlab']:
         return jsonify({"error": "无效的 VCS 类型。只支持 'github' 或 'gitlab'。"}), 400
 
@@ -189,39 +188,59 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
 
     results = get_review_results(vcs_type, identifier, pr_mr_id, commit_sha)
 
-    if results is None and commit_sha: # 特定 commit 未找到
-        return jsonify({"error": f"未找到针对 commit {commit_sha} 的审查结果。"}), 404
-    if not results and not commit_sha: # PR/MR 整体未找到结果 (空字典也算找到)
-         # get_review_results 在找不到 key 时返回 {}，所以这里需要区分 None 和 {}
-        if results is None: # 意味着 Redis 错误
-            return jsonify({"error": "从 Redis 获取审查结果时出错。"}), 500
-        # 如果是空字典，表示该 PR/MR 的 key 存在，但没有 commit 的审查结果，或者所有 commit 的结果都被清除了
-        # 这种情况应该返回空列表或空对象，而不是 404
-        logger.info(f"未找到 {vcs_type}/{identifier}#{pr_mr_id} 的审查结果，或结果为空。")
+    # 情况1: Redis 服务出错 (get_review_results 会返回 None)
+    # 注意: get_review_results 在获取所有 commits (commit_sha=None) 且 Redis 错误时返回 {}，
+    # 但如果内部判断到 Redis 错误，它应该返回 None 或者一个明确的错误指示。
+    # 假设 get_review_results 在 Redis 错误时总是返回 None，或者在获取所有 commits 时返回一个包含错误信息的特殊结构。
+    # 当前 get_review_results 实现:
+    # - commit_sha provided: returns None on error or not found.
+    # - commit_sha not provided: returns {"commits": {...}, "project_name": "..."} or {} on error.
+    # 为了简化，我们先判断 results 是否为 None，这明确表示了 get_review_results 遇到了问题或未找到特定 commit。
+
+    if results is None: # 明确表示 Redis 错误或特定 commit 未找到
+        if commit_sha:
+            logger.info(f"未找到 {vcs_type}/{identifier}#{pr_mr_id} 针对 commit {commit_sha} 的审查结果。")
+            return jsonify({"error": f"未找到针对 commit {commit_sha} 的审查结果。"}), 404
+        else:
+            # 如果是请求所有 commits (commit_sha is None) 且 results is None，
+            # 这在当前 get_review_results 实现中不应该发生（它会返回 {}）。
+            # 但如果发生了，则视为 Redis 错误。
+            logger.error(f"从 Redis 获取 {vcs_type}/{identifier}#{pr_mr_id} 的所有审查结果时出错或未找到顶级键。")
+            return jsonify({"error": "从 Redis 获取审查结果时出错或未找到该 PR/MR 的记录。"}), 500
 
 
-    # 如果是获取特定 commit 的结果，且 results 不是 None (即找到了)
-    if commit_sha and results is not None:
+    if commit_sha: # 请求特定 commit 的结果
+        # results 在这里不为 None，意味着找到了该 commit 的数据
         return jsonify({"commit_sha": commit_sha, "review_data": results}), 200
-    # 如果是获取 PR/MR 的所有 commits 的结果
-    elif not commit_sha:
-        # results 此时是一个字典 {"commits": {commit_sha: review_data, ...}, "project_name": "optional_name"}
+    else: # 请求 PR/MR 的所有 commits 的结果 (results 是一个字典，可能包含 "commits" 和 "project_name")
+        all_commits_reviews = results.get("commits", {})
+        project_name = results.get("project_name")
+
+        if not all_commits_reviews and not project_name:
+             # 如果 "commits" 和 "project_name" 都不存在，且 results 不是 None (例如是 {})
+             # 这意味着 PR/MR 的 Redis key 可能存在，但里面是空的，或者 get_review_results 返回了空字典表示未找到
+            logger.info(f"未找到 {vcs_type}/{identifier}#{pr_mr_id} 的任何审查结果，或结果为空。")
+            # 返回空数据而不是404，因为父记录可能存在但无内容
+            response_data = {
+                "pr_mr_id": pr_mr_id,
+                "all_reviews_by_commit": {},
+                "display_identifier": identifier # 默认显示标识符
+            }
+            if vcs_type == 'gitlab' and project_name: # 即使 all_commits_reviews 为空，也可能想显示项目名
+                response_data["project_name"] = project_name
+                response_data["display_identifier"] = project_name
+            return jsonify(response_data), 200
+
         response_data = {
             "pr_mr_id": pr_mr_id,
-            "all_reviews_by_commit": results.get("commits", {}) 
+            "all_reviews_by_commit": all_commits_reviews
         }
-        if "project_name" in results:
-            response_data["project_name"] = results["project_name"]
+        if project_name:
+            response_data["project_name"] = project_name
         
-        # identifier in the URL for GitLab is project_id. If we have project_name,
-        # we can also add it here for convenience, though display_name in the list view handles this.
-        # For GitHub, identifier is owner/repo, which is already the display name.
-        if vcs_type == 'gitlab' and "project_name" in results:
-            response_data["display_identifier"] = results["project_name"]
+        if vcs_type == 'gitlab' and project_name:
+            response_data["display_identifier"] = project_name
         else:
-            response_data["display_identifier"] = identifier # Default to identifier from URL
+            response_data["display_identifier"] = identifier
 
         return jsonify(response_data), 200
-    
-    # 理论上不应该到这里，但作为保险
-    return jsonify({"error": "无法检索审查结果。"}), 500
