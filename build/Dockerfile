@@ -1,8 +1,8 @@
 FROM harbor.qc.host.dxy/library/python:3.9
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
-ENV REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/ca2024.pem
-ENV SSL_CERT_FILE=/usr/local/share/ca-certificates/ca2024.pem
+ENV REQUESTS_CA_BUNDLE=""
+#ENV SSL_CERT_FILE=/usr/local/share/ca-certificates/ca2024.pem
 
 ENV PATH /usr/local/bin:$PATH
 
