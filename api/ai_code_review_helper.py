@@ -116,8 +116,10 @@ if __name__ == '__main__':
         f"  列表: curl -X GET -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" http://localhost:{SERVER_PORT}/config/gitlab/projects")
 
     logger.info("--- Webhook 端点 ---")
-    logger.info(f"GitHub Webhook URL: http://localhost:{SERVER_PORT}/github_webhook")
-    logger.info(f"GitLab Webhook URL: http://localhost:{SERVER_PORT}/gitlab_webhook")
+    logger.info(f"GitHub Webhook URL (详细审查): http://localhost:{SERVER_PORT}/github_webhook")
+    logger.info(f"GitLab Webhook URL (详细审查): http://localhost:{SERVER_PORT}/gitlab_webhook")
+    logger.info(f"GitHub Webhook URL (通用审查): http://localhost:{SERVER_PORT}/github_webhook_general")
+    logger.info(f"GitLab Webhook URL (通用审查): http://localhost:{SERVER_PORT}/gitlab_webhook_general")
     logger.info("--- ---")
 
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

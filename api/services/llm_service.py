@@ -306,3 +306,80 @@ def get_openai_code_review(structured_file_changes):
         final_json_output = "[]"
 
     return final_json_output
+
+
+def get_openai_code_review_coarse(file_data_list: list):
+    """
+    使用 OpenAI API 对代码变更进行粗粒度的审查。
+    接收一个文件数据列表，每个文件包含路径、diff、旧内容和新内容。
+    返回一个单一的文本字符串，作为整体的审查意见 (Markdown 格式)。
+    """
+    client = get_openai_client()
+    if not client:
+        logger.warning("OpenAI 客户端不可用 (未初始化或初始化失败)。跳过粗粒度审查。")
+        return "OpenAI client is not available. Skipping coarse review."
+    if not file_data_list:
+        logger.info("未提供文件数据以供粗粒度审查。")
+        return "No file data provided for coarse review."
+
+    system_prompt = """
+# 角色
+你是一名经验丰富的代码审查专家。你的任务是基于提供的代码变更（包括文件路径、变更状态、diff/patch 以及可选的旧版和新版完整文件内容），进行一次粗粒度的代码审查。
+
+# 指令
+1.  **输出格式**: 你的审查结果必须是一个**单一的文本块**，使用 Markdown 格式化以便阅读。**绝对不要输出 JSON 或任何结构化数据。**
+2.  **审查重点**:
+    *   **正确性与健壮性**: 发现潜在的逻辑错误、边界条件问题、不正确的错误处理等。
+    *   **安全性**: 识别任何可能的安全漏洞，如注入风险、数据泄露等。
+    *   **性能**: 指出明显的性能瓶颈或低效代码。
+    *   **设计与架构**: 评论代码是否遵循良好的设计原则，模块化和可维护性如何。
+    *   **最佳实践**: 是否遵循了语言或框架的最佳实践和编码规范。
+3.  **审查范围**:
+    *   如果一个文件的旧内容或新内容未提供（例如因为文件过大或为二进制文件），请基于可用的 diff 信息进行审查，并可以注明这一点。
+    *   对每个有显著问题或值得一提的点的文件，请提及文件路径并给出你的评论。
+    *   如果所有文件看起来都很好，没有主要问题，你可以简单说明代码变更整体良好，或提出一些次要的观察点。
+4.  **风格要求**:
+    *   保持审查意见简洁、中肯、具有可操作性。
+    *   可以先给出一个总体摘要（如果适用），然后列出针对特定文件的评论。
+    *   避免针对非常细微的格式问题或个人偏好进行评论，除非它们严重影响可读性或维护性。
+
+# 输入数据格式
+你将收到一个 JSON 字符串，它是一个包含多个文件变更对象的列表。每个文件变更对象结构如下：
+{
+  "file_path": "string, 文件的完整路径",
+  "status": "string, 变更状态 ('added', 'modified', 'deleted', 'renamed')",
+  "diff_text": "string, 该文件的 diff/patch 内容",
+  "old_content": "string or null, 变更前的文件完整内容 (如果是新增文件则为 null)",
+  "new_content": "string or null, 变更后的文件完整内容 (如果是删除文件则为 null)"
+}
+
+请现在根据这些指令，对我接下来提供的文件变更列表（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的文本审查意见。
+"""
+
+    try:
+        # 准备发送给 LLM 的用户提示内容
+        user_prompt_content = json.dumps(file_data_list, ensure_ascii=False, indent=2)
+    except TypeError as te:
+        logger.error(f"序列化粗粒度审查的输入数据时出错: {te}")
+        return "Error serializing input data for coarse review."
+
+    current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    logger.info(f"正在发送包含 {len(file_data_list)} 个文件的粗粒度审查请求给 {current_model}...")
+
+    try:
+        response = client.chat.completions.create(
+            model=current_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt_content}
+            ],
+            # 对于纯文本输出，不指定 response_format 或使用默认
+        )
+        review_text = response.choices[0].message.content.strip()
+        logger.info(f"-------------LLM 粗粒度审查输出-----------")
+        logger.info(review_text)
+        logger.info(f"-------------LLM 粗粒度审查输出结束-----------")
+        return review_text
+    except Exception as e:
+        logger.exception("从 OpenAI 获取粗粒度代码审查时出错:")
+        return f"Error during coarse code review with OpenAI: {e}"

@@ -249,11 +249,13 @@ AI Code Review Helper 是一个旨在自动化代码审查流程的工具。它�
 ## API 端点
 
 -   `/admin`: 管理面板 HTML 页面。
--   `/github_webhook`: GitHub Webhook 接收端点。
--   `/gitlab_webhook`: GitLab Webhook 接收端点。
+-   `/github_webhook`: GitHub Webhook 接收端点 (用于基于 LLM 结构化 JSON 输出的**详细行级审查**)。
+-   `/gitlab_webhook`: GitLab Webhook 接收端点 (用于基于 LLM 结构化 JSON 输出的**详细行级审查**)。
+-   `/github_webhook_general`: GitHub Webhook 接收端点 (用于基于 LLM 纯文本/Markdown 输出的**通用审查**)。
+-   `/gitlab_webhook_general`: GitLab Webhook 接收端点 (用于基于 LLM 纯文本/Markdown 输出的**通用审查**)。
 -   `/config/*`: (如上所述) 配置管理 API 端点，受 `X-Admin-API-Key` 保护。
-    -   `/config/review_results/list`: 列出已审查的 PR/MR。
-    -   `/config/review_results/<vcs_type>/<identifier>/<pr_mr_id>`: 获取特定 PR/MR 的审查详情。
+    -   `/config/review_results/list`: 列出已审查的 PR/MR (包括通过详细审查和通用审查接口处理的)。
+    -   `/config/review_results/<vcs_type>/<identifier>/<pr_mr_id>`: 获取特定 PR/MR 的审查详情。`vcs_type` 可以是 `github`, `gitlab`, `github_general`, 或 `gitlab_general`。通用审查结果会以特定格式展示。
 
 ## 注意事项
 

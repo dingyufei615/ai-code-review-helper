@@ -181,8 +181,10 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
     """
     commit_sha = request.args.get('commit_sha', None)
 
-    if vcs_type not in ['github', 'gitlab']:
-        return jsonify({"error": "无效的 VCS 类型。只支持 'github' 或 'gitlab'。"}), 400
+    # 允许的 vcs_type 包括详细审查和通用审查
+    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general']
+    if vcs_type not in allowed_vcs_types:
+        return jsonify({"error": f"无效的 VCS 类型。支持的类型: {', '.join(allowed_vcs_types)}。"}), 400
 
     logger.info(f"请求审查结果: VCS={vcs_type}, ID={identifier}, PR/MR ID={pr_mr_id}, Commit SHA={commit_sha if commit_sha else '所有'}")
 
