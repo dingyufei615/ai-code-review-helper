@@ -8,12 +8,12 @@ ENV PATH /usr/local/bin:$PATH
 
 # set dxy proxy
 # conda proxy setting.
-#RUN sh -c "echo 'default_channels:\n\
-#  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/msys2/\n\
-#  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/pro/\n\
-#  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/r/\n\
-#  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/free/\n\
-#  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/main/' > ~/.condarc" && cat ~/.condarc
+RUN sh -c "echo 'default_channels:\n\
+  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/msys2/\n\
+  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/pro/\n\
+  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/r/\n\
+  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/free/\n\
+  - https://nexus.k8s.qc.host.dxy/repository/anaconda/pkgs/main/' > ~/.condarc" && cat ~/.condarc
 
 RUN mkdir -p ~/.pip && sh -c "echo '[global]\n\
 index-url = https://nexus.k8s.qc.host.dxy/repository/pypi-aliyun/simple\n\
