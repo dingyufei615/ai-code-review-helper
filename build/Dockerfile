@@ -1,4 +1,4 @@
-FROM harbor.qc.host.dxy/library/miniconda3
+FROM harbor.qc.host.dxy/library/python:3.9
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 ENV REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/ca2024.pem
@@ -31,7 +31,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # 安装依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --ignore-installed --no-cache-dir -r requirements.txt
 
 # 将项目代码复制到容器中
 # api 目录包含所有应用逻辑和 Flask 入口
