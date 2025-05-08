@@ -151,7 +151,7 @@ def github_webhook():
         logger.info("GitHub: 解析后未检测到变更。无需审查。")
         return "未检测到变更", 200
 
-    logger.info("GitHub: 正在发送变更给 OpenAI 进行审查...")
+    logger.info(f'GitHub: 正在发送变更给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
     review_result_json = get_openai_code_review(structured_changes)
 
     logger.info("--- GitHub: AI 代码审查结果 (JSON) ---")
@@ -321,7 +321,7 @@ def gitlab_webhook():
         logger.info("GitLab: 解析后未检测到变更。无需审查。")
         return "未检测到变更", 200
 
-    logger.info("GitLab: 正在发送变更给 OpenAI 进行审查...")
+    logger.info(f'GitHub: 正在发送变更给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
     review_result_json = get_openai_code_review(structured_changes)
 
     logger.info("--- GitLab: AI 代码审查结果 (JSON) ---")
