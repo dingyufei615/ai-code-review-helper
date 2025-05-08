@@ -193,18 +193,23 @@
         <li><a href="#" id="navGitlab">GitLab 配置</a></li>
         <li><a href="#" id="navLlmSettings">LLM 配置</a></li>
         <li><a href="#" id="navNotificationSettings">通知配置</a></li>
+        <li><a href="#" id="navApiKeySettings">API 密钥设置</a></li>
     </ul>
 </div>
 
 <div class="main-content">
     <div class="container">
-        <div class="api-key-section" style="margin-bottom: 20px; padding: 15px; background-color: #e8f4fd; border: 1px solid #bde0fe; border-radius: 5px;">
-            <label for="adminApiKey">Admin API Key:</label>
-            <input type="password" id="adminApiKey" placeholder="请输入您的 Admin API Key">
-            <p id="apiKeyStatus" style="font-size:0.9em; color: #555;">所有操作都需要此 Key。</p>
-        </div>
-
         <div id="globalStatus" class="status-message" style="display:none;"></div>
+
+        <!-- API Key Settings Section -->
+        <div id="apiKeySettingsSection" class="content-section">
+            <div class="config-section api-key-section"> <!-- Re-using api-key-section for styling if desired, or new styles -->
+                <h2>Admin API 密钥设置</h2>
+                <label for="adminApiKey">Admin API Key:</label>
+                <input type="password" id="adminApiKey" placeholder="请输入您的 Admin API Key">
+                <p id="apiKeyStatus" style="font-size:0.9em; color: #555;">所有操作都需要此 Key。</p>
+            </div>
+        </div>
 
         <!-- GitHub Configurations -->
         <div id="githubSection" class="content-section active"> <!-- Active by default -->
@@ -294,11 +299,13 @@
     const navGitlab = document.getElementById('navGitlab');
     const navLlmSettings = document.getElementById('navLlmSettings');
     const navNotificationSettings = document.getElementById('navNotificationSettings');
+    const navApiKeySettings = document.getElementById('navApiKeySettings'); // 新增
 
     const githubSection = document.getElementById('githubSection');
     const gitlabSection = document.getElementById('gitlabSection');
     const llmSettingsSection = document.getElementById('llmSettingsSection');
     const notificationSettingsSection = document.getElementById('notificationSettingsSection');
+    const apiKeySettingsSection = document.getElementById('apiKeySettingsSection'); // 新增
     // settingsSection is removed
 
     // Helper functions for cookies
@@ -330,6 +337,7 @@
         gitlabSection.classList.remove('active');
         llmSettingsSection.classList.remove('active');
         notificationSettingsSection.classList.remove('active');
+        apiKeySettingsSection.classList.remove('active'); // 新增
         // settingsSection.classList.remove('active'); // Removed
 
         // Deactivate all nav links
@@ -337,6 +345,7 @@
         navGitlab.classList.remove('active');
         navLlmSettings.classList.remove('active');
         navNotificationSettings.classList.remove('active');
+        navApiKeySettings.classList.remove('active'); // 新增
         // navSettings.classList.remove('active'); // Removed
 
         // Show the selected section and activate its nav link
@@ -352,6 +361,9 @@
         } else if (sectionToShow === 'notificationSettings') {
             notificationSettingsSection.classList.add('active');
             navNotificationSettings.classList.add('active');
+        } else if (sectionToShow === 'apiKeySettings') { // 新增
+            apiKeySettingsSection.classList.add('active');
+            navApiKeySettings.classList.add('active');
         }
         // Removed 'settings' section logic
     }
@@ -371,6 +383,10 @@
     navNotificationSettings.addEventListener('click', (e) => {
         e.preventDefault();
         showSection('notificationSettings');
+    });
+    navApiKeySettings.addEventListener('click', (e) => { // 新增
+        e.preventDefault();
+        showSection('apiKeySettings');
     });
     // navSettings event listener removed
 
