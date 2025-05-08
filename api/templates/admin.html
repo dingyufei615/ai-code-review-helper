@@ -183,6 +183,55 @@
         .content-section.active {
             display: block; /* Shown when active */
         }
+
+        /* Styles for AI Review Results Section */
+        #aiReviewResultsSection .pr-mr-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        #aiReviewResultsSection .pr-mr-list li {
+            padding: 10px;
+            border: 1px solid #eee;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            background-color: #f9f9f9;
+        }
+        #aiReviewResultsSection .pr-mr-list li:hover {
+            background-color: #e9e9e9;
+        }
+        #aiReviewResultsSection .commit-details {
+            margin-top: 15px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fdfdfd;
+        }
+        #aiReviewResultsSection .commit-details h4 {
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        #aiReviewResultsSection .review-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 3px;
+            background-color: #fff;
+        }
+        #aiReviewResultsSection .review-item p {
+            margin: 5px 0;
+        }
+        #aiReviewResultsSection .review-item strong {
+            color: #333;
+        }
+        #aiReviewResultsSection .review-item pre {
+            background-color: #f0f0f0;
+            padding: 8px;
+            border-radius: 3px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
     </style>
 </head>
 <body>
@@ -194,6 +243,7 @@
         <li><a href="#" id="navLlmSettings">LLM 配置</a></li>
         <li><a href="#" id="navNotificationSettings">通知配置</a></li>
         <li><a href="#" id="navApiKeySettings">API 密钥设置</a></li>
+        <li><a href="#" id="navAiReviewResults">AI 审查记录</a></li>
     </ul>
 </div>
 
@@ -288,6 +338,21 @@
                 </form>
             </div>
         </div>
+
+        <!-- AI Code Review Results Section -->
+        <div id="aiReviewResultsSection" class="content-section">
+            <div class="config-section">
+                <h2>AI 审查记录</h2>
+                <p>点击下面的 PR/MR 查看详细的 AI 审查结果。</p>
+                <button id="refreshReviewResultsList">刷新列表</button>
+                <ul id="reviewedPrMrList" class="pr-mr-list">
+                    <!-- List of PRs/MRs will be populated here -->
+                </ul>
+                <div id="reviewDetailsContainer">
+                    <!-- Detailed reviews for a selected PR/MR will be shown here -->
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -300,12 +365,14 @@
     const navLlmSettings = document.getElementById('navLlmSettings');
     const navNotificationSettings = document.getElementById('navNotificationSettings');
     const navApiKeySettings = document.getElementById('navApiKeySettings'); // 新增
+    const navAiReviewResults = document.getElementById('navAiReviewResults'); // 新增 for AI Review Results
 
     const githubSection = document.getElementById('githubSection');
     const gitlabSection = document.getElementById('gitlabSection');
     const llmSettingsSection = document.getElementById('llmSettingsSection');
     const notificationSettingsSection = document.getElementById('notificationSettingsSection');
     const apiKeySettingsSection = document.getElementById('apiKeySettingsSection'); // 新增
+    const aiReviewResultsSection = document.getElementById('aiReviewResultsSection'); // 新增 for AI Review Results
     // settingsSection is removed
 
     // Helper functions for cookies
@@ -338,6 +405,7 @@
         llmSettingsSection.classList.remove('active');
         notificationSettingsSection.classList.remove('active');
         apiKeySettingsSection.classList.remove('active'); // 新增
+        aiReviewResultsSection.classList.remove('active'); // 新增
         // settingsSection.classList.remove('active'); // Removed
 
         // Deactivate all nav links
@@ -346,6 +414,7 @@
         navLlmSettings.classList.remove('active');
         navNotificationSettings.classList.remove('active');
         navApiKeySettings.classList.remove('active'); // 新增
+        navAiReviewResults.classList.remove('active'); // 新增
         // navSettings.classList.remove('active'); // Removed
 
         // Show the selected section and activate its nav link
@@ -364,6 +433,10 @@
         } else if (sectionToShow === 'apiKeySettings') { // 新增
             apiKeySettingsSection.classList.add('active');
             navApiKeySettings.classList.add('active');
+        } else if (sectionToShow === 'aiReviewResults') { // 新增
+            aiReviewResultsSection.classList.add('active');
+            navAiReviewResults.classList.add('active');
+            loadReviewedPrMrList(); // Load the list when section is shown
         }
         // Removed 'settings' section logic
     }
@@ -387,6 +460,10 @@
     navApiKeySettings.addEventListener('click', (e) => { // 新增
         e.preventDefault();
         showSection('apiKeySettings');
+    });
+    navAiReviewResults.addEventListener('click', (e) => { // 新增
+        e.preventDefault();
+        showSection('aiReviewResults');
     });
     // navSettings event listener removed
 
@@ -658,6 +735,7 @@
             await loadGithubRepos();
             await loadGitlabProjects();
             await loadGlobalSettings(); // Load global settings
+            // Do not auto-load review results here, it's loaded when section is active
         } else {
             apiKey = prompt('管理面板需要 Admin API Key 才能访问。\n请输入您的 Admin API Key:');
             if (apiKey && apiKey.trim() !== '') {
@@ -669,6 +747,7 @@
                 await loadGithubRepos();
                 await loadGitlabProjects();
                 await loadGlobalSettings(); // Load global settings
+                // Do not auto-load review results here
             } else {
                 apiKeyStatus.textContent = 'Admin API Key 未提供。请输入有效的 Key 以使用管理面板功能。';
                 adminApiKeyInput.focus();
@@ -692,6 +771,9 @@
             await loadGithubRepos();
             await loadGitlabProjects();
             await loadGlobalSettings(); // Reload global settings
+            if (aiReviewResultsSection.classList.contains('active')) { // If review section is active, reload its list
+                loadReviewedPrMrList();
+            }
         } else {
             setCookie('ADMIN_API_KEY', '', -1); // Clear cookie if input is emptied
             apiKeyStatus.textContent = 'Admin API Key 已清除。请输入有效的 Key 以继续。';
@@ -704,7 +786,104 @@
     document.addEventListener('DOMContentLoaded', async () => {
         showSection('github'); // Set GitHub as default view
         await checkAndSetApiKey(); // Handles API key logic and then loads lists
+
+        document.getElementById('refreshReviewResultsList').addEventListener('click', loadReviewedPrMrList);
     });
+
+    // --- AI Review Results Functions ---
+    const reviewedPrMrListUl = document.getElementById('reviewedPrMrList');
+    const reviewDetailsContainer = document.getElementById('reviewDetailsContainer');
+
+    async function loadReviewedPrMrList() {
+        reviewedPrMrListUl.innerHTML = '<li>正在加载审查记录...</li>';
+        reviewDetailsContainer.innerHTML = ''; // Clear previous details
+
+        const data = await fetchData('/config/review_results/list');
+        if (data && data.reviewed_pr_mr_list) {
+            reviewedPrMrListUl.innerHTML = '';
+            if (data.reviewed_pr_mr_list.length === 0) {
+                reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
+                return;
+            }
+            data.reviewed_pr_mr_list.forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = item.display_name; // Using display_name from backend
+                li.dataset.vcsType = item.vcs_type;
+                li.dataset.identifier = item.identifier;
+                li.dataset.prMrId = item.pr_mr_id;
+                li.onclick = () => loadSpecificReviewDetails(item.vcs_type, item.identifier, item.pr_mr_id);
+                reviewedPrMrListUl.appendChild(li);
+            });
+        } else if (data) { // Empty list is valid
+            reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
+        } else {
+            reviewedPrMrListUl.innerHTML = '<li>加载审查记录失败。请检查 Admin API Key 或网络。</li>';
+        }
+    }
+
+    async function loadSpecificReviewDetails(vcsType, identifier, prMrId) {
+        reviewDetailsContainer.innerHTML = '<h4>正在加载详细审查结果...</h4>';
+        const url = `/config/review_results/${vcsType}/${encodeURIComponent(identifier)}/${prMrId}`;
+        const data = await fetchData(url);
+
+        if (data && data.all_reviews_by_commit) {
+            // 使用 data.display_identifier (由后端提供，对于GitLab会是项目名) 来显示标题
+            const displayTitleIdentifier = data.display_identifier || identifier;
+            reviewDetailsContainer.innerHTML = `<h3>${vcsType.toUpperCase()}: ${displayTitleIdentifier} #${prMrId} 的审查结果</h3>`;
+            if (Object.keys(data.all_reviews_by_commit).length === 0) {
+                reviewDetailsContainer.innerHTML += '<p>此 PR/MR 没有找到具体的审查评论记录。</p>';
+                return;
+            }
+
+            for (const [commitSha, reviewDataJson] of Object.entries(data.all_reviews_by_commit)) {
+                const commitDiv = document.createElement('div');
+                commitDiv.className = 'commit-details';
+                commitDiv.innerHTML = `<h4>Commit: ${commitSha.substring(0, 12)}...</h4>`;
+                
+                let reviewsArray = [];
+                try {
+                    // reviewDataJson is already an object/array from the backend if parsed correctly there
+                    // If it's a string, it needs parsing. If it's an object/array, use as is.
+                    if (typeof reviewDataJson === 'string') {
+                        reviewsArray = JSON.parse(reviewDataJson);
+                    } else {
+                        reviewsArray = reviewDataJson; // Assuming it's already parsed by backend or fetchData
+                    }
+                } catch (e) {
+                    console.error("Error parsing reviewDataJson for commit " + commitSha + ":", e);
+                    commitDiv.innerHTML += `<p>解析此 commit 的审查数据时出错。</p>`;
+                    reviewDetailsContainer.appendChild(commitDiv);
+                    continue;
+                }
+
+
+                if (reviewsArray && reviewsArray.length > 0) {
+                    reviewsArray.forEach(review => {
+                        const reviewItemDiv = document.createElement('div');
+                        reviewItemDiv.className = 'review-item';
+                        reviewItemDiv.innerHTML = `
+                            <p><strong>文件:</strong> ${review.file}</p>
+                            <p><strong>行号 (新):</strong> ${review.lines.new || 'N/A'} (旧: ${review.lines.old || 'N/A'})</p>
+                            <p><strong>分类:</strong> ${review.category} | <strong>严重性:</strong> ${review.severity}</p>
+                            <p><strong>分析:</strong> ${review.analysis}</p>
+                            <p><strong>建议:</strong></p>
+                            <pre>${review.suggestion.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+                        `;
+                        commitDiv.appendChild(reviewItemDiv);
+                    });
+                } else {
+                    commitDiv.innerHTML += '<p>此 commit 没有审查评论。</p>';
+                }
+                reviewDetailsContainer.appendChild(commitDiv);
+            }
+
+        } else if (data && data.error) {
+            reviewDetailsContainer.innerHTML = `<p>错误: ${data.error}</p>`;
+        } else {
+            reviewDetailsContainer.innerHTML = '<p>加载详细审查结果失败。</p>';
+        }
+    }
+
 </script>
 </body>
 </html>

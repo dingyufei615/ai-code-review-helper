@@ -4,7 +4,8 @@ import logging
 from api.app_factory import app
 from api.core_config import (
     app_configs, github_repo_configs, gitlab_project_configs,
-    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY
+    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY,
+    get_all_reviewed_prs_mrs_keys, get_review_results # 新增导入
 )
 import api.core_config as core_config_module  # 访问 redis_client 的推荐方式
 from api.utils import require_admin_key
@@ -158,3 +159,69 @@ def update_global_settings():
         return jsonify({"message": f"Global settings updated for: {', '.join(updated_keys)}"}), 200
     else:
         return jsonify({"message": "No settings were updated or values provided matched existing configuration."}), 200
+
+
+# --- AI Code Review Results Endpoints ---
+@app.route('/config/review_results/list', methods=['GET'])
+@require_admin_key
+def list_reviewed_prs_mrs():
+    """列出所有已存储 AI 审查结果的 PR/MR。"""
+    reviewed_items = get_all_reviewed_prs_mrs_keys()
+    if reviewed_items is None: # 可能因为 Redis 错误返回 None
+        return jsonify({"error": "无法从 Redis 获取审查结果列表。"}), 500
+    return jsonify({"reviewed_pr_mr_list": reviewed_items}), 200
+
+
+@app.route('/config/review_results/<string:vcs_type>/<path:identifier>/<string:pr_mr_id>', methods=['GET'])
+@require_admin_key
+def get_specific_review_results(vcs_type, identifier, pr_mr_id):
+    """
+    获取特定 PR/MR 的 AI 审查结果。
+    可以通过查询参数 ?commit_sha=<sha> 来获取特定 commit 的结果。
+    """
+    commit_sha = request.args.get('commit_sha', None)
+    
+    # 验证 vcs_type 是否有效
+    if vcs_type not in ['github', 'gitlab']:
+        return jsonify({"error": "无效的 VCS 类型。只支持 'github' 或 'gitlab'。"}), 400
+
+    logger.info(f"请求审查结果: VCS={vcs_type}, ID={identifier}, PR/MR ID={pr_mr_id}, Commit SHA={commit_sha if commit_sha else '所有'}")
+
+    results = get_review_results(vcs_type, identifier, pr_mr_id, commit_sha)
+
+    if results is None and commit_sha: # 特定 commit 未找到
+        return jsonify({"error": f"未找到针对 commit {commit_sha} 的审查结果。"}), 404
+    if not results and not commit_sha: # PR/MR 整体未找到结果 (空字典也算找到)
+         # get_review_results 在找不到 key 时返回 {}，所以这里需要区分 None 和 {}
+        if results is None: # 意味着 Redis 错误
+            return jsonify({"error": "从 Redis 获取审查结果时出错。"}), 500
+        # 如果是空字典，表示该 PR/MR 的 key 存在，但没有 commit 的审查结果，或者所有 commit 的结果都被清除了
+        # 这种情况应该返回空列表或空对象，而不是 404
+        logger.info(f"未找到 {vcs_type}/{identifier}#{pr_mr_id} 的审查结果，或结果为空。")
+
+
+    # 如果是获取特定 commit 的结果，且 results 不是 None (即找到了)
+    if commit_sha and results is not None:
+        return jsonify({"commit_sha": commit_sha, "review_data": results}), 200
+    # 如果是获取 PR/MR 的所有 commits 的结果
+    elif not commit_sha:
+        # results 此时是一个字典 {"commits": {commit_sha: review_data, ...}, "project_name": "optional_name"}
+        response_data = {
+            "pr_mr_id": pr_mr_id,
+            "all_reviews_by_commit": results.get("commits", {}) 
+        }
+        if "project_name" in results:
+            response_data["project_name"] = results["project_name"]
+        
+        # identifier in the URL for GitLab is project_id. If we have project_name,
+        # we can also add it here for convenience, though display_name in the list view handles this.
+        # For GitHub, identifier is owner/repo, which is already the display name.
+        if vcs_type == 'gitlab' and "project_name" in results:
+            response_data["display_identifier"] = results["project_name"]
+        else:
+            response_data["display_identifier"] = identifier # Default to identifier from URL
+
+        return jsonify(response_data), 200
+    
+    # 理论上不应该到这里，但作为保险
+    return jsonify({"error": "无法检索审查结果。"}), 500

@@ -36,6 +36,7 @@ REDIS_KEY_PREFIX = "ai_code_review_helper:"
 REDIS_GITHUB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}github_repo_configs"
 REDIS_GITLAB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}gitlab_project_configs"
 REDIS_PROCESSED_COMMITS_SET_KEY = f"{REDIS_KEY_PREFIX}processed_commits_set"
+REDIS_REVIEW_RESULTS_KEY_PREFIX = f"{REDIS_KEY_PREFIX}review_results:"
 
 
 def init_redis_client():
@@ -185,6 +186,160 @@ def remove_processed_commit_entries_for_pr_mr(vcs_type: str, identifier: str, pr
     except Exception as e:
         logger.error(
             f"为 {vcs_type} {identifier} #{pr_mr_id} 移除已处理的 commit 条目时发生意外错误: {e}")
+
+    # 同时删除关联的审查结果
+    delete_review_results_for_pr_mr(vcs_type, identifier, pr_mr_id)
+
+
+def _get_review_results_redis_key(vcs_type: str, identifier: str, pr_mr_id: str) -> str:
+    """生成用于存储特定 PR/MR 的 AI 审查结果的 Redis Key。"""
+    return f"{REDIS_REVIEW_RESULTS_KEY_PREFIX}{vcs_type}:{identifier}:{str(pr_mr_id)}"
+
+
+def save_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str, review_json_string: str, project_name: str = None):
+    """将 AI 审查结果保存到 Redis。"""
+    if not redis_client:
+        logger.warning("Redis 客户端不可用，无法保存 AI 审查结果。")
+        return
+    if not commit_sha:
+        logger.warning(f"警告: commit_sha 为空，针对 {vcs_type}:{identifier}:{pr_mr_id}。跳过保存审查结果。")
+        return
+
+    redis_key = _get_review_results_redis_key(vcs_type, identifier, pr_mr_id)
+    try:
+        # 使用 pipeline 保证原子性
+        pipe = redis_client.pipeline()
+        pipe.hset(redis_key, commit_sha, review_json_string)
+        if vcs_type == 'gitlab' and project_name:
+            # 仅在首次或需要更新时设置项目名称
+            # 如果 _project_name 已存在且不同，可以选择是否覆盖，这里简单覆盖
+            pipe.hset(redis_key, "_project_name", project_name)
+        
+        # 为审查结果设置过期时间，例如7天，以避免无限增长
+        pipe.expire(redis_key, 60 * 60 * 24 * 7) # 7 days
+        pipe.execute()
+        
+        log_msg = f"成功将 {vcs_type} {identifier} #{pr_mr_id} (commit: {commit_sha}) 的审查结果保存到 Redis。"
+        if vcs_type == 'gitlab' and project_name:
+            log_msg += f" 项目名称: {project_name}。"
+        logger.info(log_msg)
+    except redis.exceptions.RedisError as e:
+        logger.error(f"保存 AI 审查结果到 Redis 时出错 (Key: {redis_key}, Commit: {commit_sha}): {e}")
+
+
+def get_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str = None):
+    """从 Redis 获取 AI 审查结果。"""
+    if not redis_client:
+        logger.warning("Redis 客户端不可用，无法获取 AI 审查结果。")
+        return None if commit_sha else {}
+
+    redis_key = _get_review_results_redis_key(vcs_type, identifier, pr_mr_id)
+    try:
+        if commit_sha:
+            result_bytes = redis_client.hget(redis_key, commit_sha)
+            if result_bytes:
+                return json.loads(result_bytes.decode('utf-8'))
+            return None
+        else: # 获取 PR/MR 的所有 commits 的审查结果
+            all_results_bytes = redis_client.hgetall(redis_key)
+            decoded_results = {}
+            project_name_for_pr_mr = None
+            for field_bytes, value_bytes in all_results_bytes.items():
+                field_str = field_bytes.decode('utf-8')
+                try:
+                    if field_str == "_project_name":
+                        project_name_for_pr_mr = value_bytes.decode('utf-8')
+                    else: # 这是一个 commit sha
+                        decoded_results[field_str] = json.loads(value_bytes.decode('utf-8'))
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.error(f"解码/解析 Redis 中的审查结果时出错 (Key: {redis_key}, Field: {field_str}): {e}")
+            
+            # 将项目名称（如果存在）添加到返回结果中，但不作为 commit 结果的一部分
+            # API 端点将决定如何使用它
+            final_result = {"commits": decoded_results}
+            if project_name_for_pr_mr:
+                final_result["project_name"] = project_name_for_pr_mr
+            return final_result
+    except redis.exceptions.RedisError as e:
+        logger.error(f"从 Redis 获取 AI 审查结果时出错 (Key: {redis_key}): {e}")
+        return None if commit_sha else {}
+    except json.JSONDecodeError as e:
+        logger.error(f"解析从 Redis 获取的 AI 审查结果 JSON 时出错 (Key: {redis_key}): {e}")
+        return None if commit_sha else {}
+
+
+def get_all_reviewed_prs_mrs_keys():
+    """获取所有已存储 AI 审查结果的 PR/MR 的 Redis Key 列表。"""
+    if not redis_client:
+        logger.warning("Redis 客户端不可用，无法获取已审查的 PR/MR 列表。")
+        return []
+    
+    keys = []
+    try:
+        # 使用 SCAN 迭代匹配的 key，以避免阻塞
+        cursor = '0'
+        while cursor != 0:
+            cursor, current_keys = redis_client.scan(cursor=cursor, match=f"{REDIS_REVIEW_RESULTS_KEY_PREFIX}*", count=100)
+            keys.extend([key.decode('utf-8') for key in current_keys])
+        
+        # 从 Key 中提取可读的 PR/MR 标识符
+        # 例如: "ai_code_review_helper:review_results:github:owner/repo:123" -> "github:owner/repo:123"
+        # 或者可以返回更结构化的信息
+        identifiers = []
+        for key in keys:
+            try:
+                # "ai_code_review_helper:review_results:github:owner/repo:123"
+                parts = key.split(':')
+                if len(parts) >= 4: # prefix, vcs_type, identifier, pr_mr_id (identifier can contain ':')
+                    vcs_type = parts[2]
+                    pr_mr_id = parts[-1]
+                    identifier_parts = parts[3:-1]
+                    identifier_str = ":".join(identifier_parts) # 对于 GitHub 是 owner/repo, 对于 GitLab 是 project_id
+                    
+                    display_identifier = identifier_str
+                    if vcs_type == 'gitlab':
+                        # 尝试从该 PR/MR 的哈希中获取项目名称
+                        try:
+                            project_name_bytes = redis_client.hget(key, "_project_name")
+                            if project_name_bytes:
+                                display_identifier = project_name_bytes.decode('utf-8')
+                                logger.debug(f"找到 GitLab 项目名称 '{display_identifier}' 用于 Key '{key}'")
+                            else:
+                                logger.debug(f"未在 Key '{key}' 中找到 GitLab 项目名称，将使用 ID '{identifier_str}'。")
+                        except Exception as e_proj_name:
+                            logger.error(f"从 Redis Key '{key}' 获取项目名称时出错: {e_proj_name}")
+                            # 回退到使用 ID
+                    
+                    identifiers.append({
+                        "key": key, # raw redis key
+                        "vcs_type": vcs_type,
+                        "identifier": identifier_str, # 原始标识符 (GitLab 为 project_id)
+                        "pr_mr_id": pr_mr_id,
+                        "display_name": f"{vcs_type.upper()}: {display_identifier} #{pr_mr_id}"
+                    })
+            except Exception as e:
+                logger.error(f"解析审查结果 Redis Key '{key}' 时出错: {e}")
+        return identifiers
+    except redis.exceptions.RedisError as e:
+        logger.error(f"从 Redis 获取所有已审查的 PR/MR 列表时出错: {e}")
+        return []
+
+
+def delete_review_results_for_pr_mr(vcs_type: str, identifier: str, pr_mr_id: str):
+    """删除特定 PR/MR 的所有 AI 审查结果。"""
+    if not redis_client:
+        logger.warning("Redis 客户端不可用，无法删除 AI 审查结果。")
+        return
+
+    redis_key = _get_review_results_redis_key(vcs_type, identifier, pr_mr_id)
+    try:
+        deleted_count = redis_client.delete(redis_key)
+        if deleted_count > 0:
+            logger.info(f"成功从 Redis 删除 {vcs_type} {identifier} #{pr_mr_id} 的 AI 审查结果 (Key: {redis_key})。")
+        else:
+            logger.info(f"在 Redis 中未找到 {vcs_type} {identifier} #{pr_mr_id} 的 AI 审查结果以供删除 (Key: {redis_key})。")
+    except redis.exceptions.RedisError as e:
+        logger.error(f"从 Redis 删除 AI 审查结果时出错 (Key: {redis_key}): {e}")
 
 
 # --- 仓库/项目特定配置存储 (内存字典, 会被 Redis 数据填充) ---

@@ -4,7 +4,8 @@ import logging
 from api.app_factory import app
 from api.core_config import (
     github_repo_configs, gitlab_project_configs, app_configs,
-    is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
+    is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr,
+    save_review_results # 新增导入
 )
 from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import get_github_pr_changes, add_github_pr_comment, get_gitlab_mr_changes, \
@@ -134,6 +135,12 @@ def github_webhook():
     logger.info(f"{review_result_json}")
     logger.info("--- GitHub 审查 JSON 结束 ---")
 
+    # 保存审查结果到 Redis
+    if head_sha: # 确保 head_sha 存在
+        save_review_results('github', repo_full_name, str(pull_number), head_sha, review_result_json)
+    else:
+        logger.warning(f"警告: GitHub PR {repo_full_name}#{pull_number} 的 head_sha 为空。无法保存审查结果。")
+
     reviews = []
     try:
         parsed_data = json.loads(review_result_json)
@@ -206,6 +213,7 @@ def gitlab_webhook():
     project_data = data.get('project', {})
     project_id = project_data.get('id')
     project_web_url = project_data.get('web_url')
+    project_name_from_payload = project_data.get('name') # 新增：提取项目名称
     mr_attrs = data.get('object_attributes', {})
     mr_iid = mr_attrs.get('iid')
     mr_title = mr_attrs.get('title')
@@ -293,6 +301,18 @@ def gitlab_webhook():
     logger.info("--- GitLab: AI 代码审查结果 (JSON) ---")
     logger.info(f"{review_result_json}")
     logger.info("--- GitLab 审查 JSON 结束 ---")
+
+    # 保存审查结果到 Redis
+    # 使用从 webhook payload 中获取的 head_sha_payload，因为它更直接对应于触发事件的 commit。
+    current_commit_sha_for_saving = head_sha_payload
+    if not current_commit_sha_for_saving and position_info and position_info.get("head_sha"):
+        current_commit_sha_for_saving = position_info.get("head_sha")
+        logger.info(f"GitLab: 使用来自 position_info 的 head_sha ({current_commit_sha_for_saving}) 保存审查结果。")
+    
+    if current_commit_sha_for_saving:
+        save_review_results('gitlab', project_id_str, str(mr_iid), current_commit_sha_for_saving, review_result_json, project_name=project_name_from_payload)
+    else:
+        logger.warning(f"警告: GitLab MR {project_id_str}#{mr_iid} 的 commit SHA 未知。无法保存审查结果。")
 
     reviews = []
     try:
