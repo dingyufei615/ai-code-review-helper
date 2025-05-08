@@ -242,8 +242,8 @@ def get_openai_code_review(structured_file_changes):
             current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
             client = get_openai_client()  # Ensure client is fresh if settings changed
             if not client:
-                logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。跳过。")
-                return "[]"  # Or handle per-file error appropriately
+                logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。将跳过此文件并继续处理其他文件。")
+                continue  # Skip this file and continue with the next ones
 
             response = client.chat.completions.create(
                 model=current_model,
