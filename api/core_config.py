@@ -40,30 +40,36 @@ REDIS_REVIEW_RESULTS_KEY_PREFIX = f"{REDIS_KEY_PREFIX}review_results:"
 
 
 def init_redis_client():
-    """初始化全局 Redis 客户端。"""
+    """初始化全局 Redis 客户端。如果配置缺失或连接失败，则会引发异常。"""
     global redis_client
     redis_host = app_configs.get("REDIS_HOST")
-    if redis_host:
-        try:
-            logger.info(f"尝试连接到 Redis: {redis_host}:{app_configs.get('REDIS_PORT')}")
-            redis_client = redis.Redis(
-                host=redis_host,
-                port=app_configs.get("REDIS_PORT"),
-                password=app_configs.get("REDIS_PASSWORD"),
-                ssl=app_configs.get("REDIS_SSL_ENABLED"),
-                db=app_configs.get("REDIS_DB"),
-                socket_connect_timeout=5  # 5 seconds timeout
-            )
-            redis_client.ping()  # 验证连接
-            logger.info("成功连接到 Redis。")
-        except redis.exceptions.ConnectionError as e:
-            logger.error(f"连接 Redis 出错: {e}。将回退到内存存储。")
-            redis_client = None
-        except Exception as e:
-            logger.error(f"Redis 初始化期间发生意外错误: {e}。将回退到内存存储。")
-            redis_client = None
-    else:
-        logger.info("Redis 未配置 (REDIS_HOST 未设置)。配置将使用内存存储。")
+    if not redis_host:
+        err_msg = "Redis 配置 (REDIS_HOST) 未提供。此为必需配置，服务无法启动。"
+        logger.critical(err_msg)
+        raise ValueError(err_msg)
+
+    try:
+        logger.info(f"尝试连接到 Redis: {redis_host}:{app_configs.get('REDIS_PORT')}")
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=app_configs.get("REDIS_PORT"),
+            password=app_configs.get("REDIS_PASSWORD"),
+            ssl=app_configs.get("REDIS_SSL_ENABLED"),
+            db=app_configs.get("REDIS_DB"),
+            socket_connect_timeout=5  # 5 seconds timeout
+        )
+        redis_client.ping()  # 验证连接
+        logger.info("成功连接到 Redis。")
+    except redis.exceptions.ConnectionError as e:
+        err_msg = f"连接 Redis 失败: {e}。请检查 Redis 配置和可用性。服务无法启动。"
+        logger.critical(err_msg)
+        redis_client = None # 确保客户端状态为 None
+        raise redis.exceptions.ConnectionError(err_msg) # 重新引发，以便主程序捕获
+    except Exception as e:
+        err_msg = f"Redis 初始化期间发生意外错误: {e}。服务无法启动。"
+        logger.critical(err_msg)
+        redis_client = None # 确保客户端状态为 None
+        raise ValueError(err_msg) # 引发通用错误
 
 
 def load_configs_from_redis():

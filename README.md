@@ -76,8 +76,12 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 -   `OPENAI_MODEL`: (默认: `gpt-4o`) 使用的 OpenAI 模型。
 -   `OPENAI_API_BASE_URL`: (可选) OpenAI API 基础 URL。
 -   `WECOM_BOT_WEBHOOK_URL`: (可选) 企业微信机器人 Webhook URL。
--   `REDIS_HOST`: (可选) Redis 服务器地址，用于持久化。
--   (更多变量如 `SERVER_HOST`, `SERVER_PORT`, `GITHUB_API_URL`, `GITLAB_INSTANCE_URL`, `REDIS_PORT`, `REDIS_PASSWORD` 等请参考启动日志或源码。)
+-   `REDIS_HOST`: **必需**。Redis 服务器地址。如果未配置或无法连接，服务将无法启动。
+-   `REDIS_PORT`: (默认: `6379`) Redis 服务器端口。
+-   `REDIS_PASSWORD`: (可选) Redis 密码。
+-   `REDIS_DB`: (默认: `0`) Redis 数据库编号。
+-   `REDIS_SSL_ENABLED`: (默认: `true`) 是否为 Redis 连接启用 SSL。
+-   (更多变量如 `SERVER_HOST`, `SERVER_PORT`, `GITHUB_API_URL`, `GITLAB_INSTANCE_URL` 等请参考启动日志或源码。)
 
 ### 2. 管理面板 (`/admin`)
 浏览器访问 `http://<your_server_host>:<your_server_port>/admin`。首次访问或 Cookie 失效时，会提示输入 `Admin API Key` (该 Key 本身通过环境变量 `ADMIN_API_KEY` 设置，面板仅用于验证和临时保存于 Cookie)。
@@ -88,7 +92,7 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 - **AI 审查记录查阅**: 查看已完成的 AI 审查结果列表，并可点击查看特定 PR/MR 在不同 Commit 下的详细审查意见。
 
 **配置持久化**:
-- **Redis**: 仓库/项目配置 (如 Webhook Secret, Token)、已处理 Commit SHA 的集合、AI 审查结果 (包含详细评论内容，默认7天过期)。
+- **Redis**: **必需**。用于存储仓库/项目配置 (如 Webhook Secret, Token)、已处理 Commit SHA 的集合、AI 审查结果 (包含详细评论内容，默认7天过期)。如果 Redis 未配置或无法连接，服务将无法启动。
 - **内存与环境变量**: 全局应用配置 (如 OpenAI API Key/URL/Model, 企业微信 Webhook URL, Redis 连接参数等) 主要通过环境变量在服务启动时加载。管理面板对这些全局配置的修改仅在当前运行时内存中生效，并优先于环境变量；服务重启后将从环境变量重新加载。因此，对于需要持久化的全局配置，建议直接修改环境变量并重启服务。
 
 ### 3. 配置 API
@@ -128,7 +132,7 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 -   **安全**: 妥善保管 `ADMIN_API_KEY`、Access Token 和 Webhook Secret。
 -   **LLM 成本**: 关注商业 LLM 服务费用。
 -   **日志**: 应用在控制台输出详细日志。
--   **配置持久化**: 仓库/项目配置和审查结果依赖 Redis；全局配置建议通过环境变量管理。
+-   **配置持久化**: 服务运行**依赖 Redis** 进行仓库/项目配置和审查结果的存储。全局配置建议通过环境变量管理。
 
 ## 贡献
 本代码 90% 由 [Aider](https://github.com/Aider-AI/aider) + Gemini 协同完成。

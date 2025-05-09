@@ -1,7 +1,9 @@
 from flask import render_template
 import os
+import sys # 新增导入
 import logging
-import atexit # 新增导入
+import atexit
+import redis # 新增导入
 
 from api.app_factory import app, executor # 导入 executor
 from api.core_config import (
@@ -38,8 +40,19 @@ if __name__ == '__main__':
 
     # 初始化 Redis 客户端并加载配置
     logger.info("--- 持久化配置 ---")
-    init_redis_client()
-    load_configs_from_redis()  # 这会填充 github_repo_configs 和 gitlab_project_configs
+    try:
+        init_redis_client()
+        # 如果 init_redis_client 成功，redis_client 应该已经设置好
+        if not core_config_module.redis_client:
+            # 这是一个后备检查，理论上 init_redis_client 应该在失败时抛出异常
+            logger.critical("Redis 客户端未能成功初始化，即使没有引发预期错误。服务无法启动。")
+            sys.exit(1)
+        logger.info(f"Redis 连接: 成功连接到 {app_configs.get('REDIS_HOST')}:{app_configs.get('REDIS_PORT')}")
+        load_configs_from_redis()  # 这会填充 github_repo_configs 和 gitlab_project_configs
+    except (ValueError, redis.exceptions.ConnectionError) as e:
+        logger.critical(f"关键错误: Redis 初始化失败 - {e}")
+        logger.critical("服务无法启动。请确保 Redis 相关环境变量 (如 REDIS_HOST, REDIS_PORT) 已正确设置，并且 Redis 服务可用。")
+        sys.exit(1)
 
     logger.info("--- 当前应用配置 ---")
     for key, value in app_configs.items():
@@ -72,15 +85,8 @@ if __name__ == '__main__':
         logger.warning(
             "警告: OpenAI 客户端无法根据当前设置初始化。在通过管理面板或环境变量提供有效的 OpenAI 配置之前，AI 审查功能将无法工作。")
 
-    logger.info("--- Redis 状态 ---")
-    if app_configs.get("REDIS_HOST"):
-        if core_config_module.redis_client:  # Check via module attribute
-            logger.info(f"Redis 连接: 已连接到 {app_configs.get('REDIS_HOST')}:{app_configs.get('REDIS_PORT')}")
-        else:
-            logger.warning(
-                f"Redis 连接: 连接到 {app_configs.get('REDIS_HOST')}:{app_configs.get('REDIS_PORT')} 失败。将使用内存存储。")
-    else:
-        logger.info("Redis 连接: 未配置。将使用内存存储。")
+    # Redis 状态的日志记录已在初始化部分处理，如果程序运行到此处，说明 Redis 已成功连接。
+    # 此处不再需要重复的 Redis 状态日志。
 
     logger.info("--- 配置管理 API ---")
     logger.info("使用 /config/* 端点管理密钥和令牌。")
