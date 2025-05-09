@@ -6,6 +6,9 @@ import logging
 logger = logging.getLogger(__name__)
 openai_client = None
 
+# 定义思考模型列表
+thinking_model_names = ["qwen3:32b", "qwen3:20b"]  # 您可以根据需要扩展此列表
+
 
 def initialize_openai_client():
     """根据 app_configs 初始化或重新初始化全局 OpenAI 客户端。"""
@@ -245,11 +248,18 @@ def get_openai_code_review(structured_file_changes):
                 logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。将跳过此文件并继续处理其他文件。")
                 continue  # Skip this file and continue with the next ones
 
+            final_user_prompt = prompt
+            if current_model in thinking_model_names:
+                logger.info(f"当前模型 {current_model} 是一个思考模型 (细粒度审查)。将在提示前添加 '/nothink'。")
+                final_user_prompt = "/nothink " + prompt
+            else:
+                logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型 (细粒度审查)。按原样使用提示。")
+
             response = client.chat.completions.create(
                 model=current_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": final_user_prompt}
                 ],
                 response_format={"type": "json_object"}
             )
@@ -321,7 +331,7 @@ def get_openai_code_review_coarse(file_data: dict):
         return "OpenAI client is not available. Skipping coarse review for single file."
     if not file_data:
         logger.info("未提供文件数据以供单个文件的粗粒度审查。")
-        return "" # 返回空字符串表示无内容可审或无问题
+        return ""  # 返回空字符串表示无内容可审或无问题
 
     system_prompt = """
 # 角色
@@ -357,7 +367,7 @@ def get_openai_code_review_coarse(file_data: dict):
   "new_content": "string or null, 变更后的文件完整内容 (如果是删除文件则为 null)"
 }
 
-请现在根据这些指令，对我接下来提供的单个文件变更（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的文本审查意见。
+请现在根据这些指令，对我接下来提供的单个文件变更（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的中文审查意见。
 """
 
     try:
@@ -370,12 +380,19 @@ def get_openai_code_review_coarse(file_data: dict):
     current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
     logger.info(f"正在发送文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查请求给 {current_model}...")
 
+    final_user_prompt_content = user_prompt_content
+    if current_model in thinking_model_names:
+        logger.info(f"当前模型 {current_model} 是一个思考模型。将在提示前添加 '/nothink'。")
+        final_user_prompt_content = "/nothink " + user_prompt_content
+    else:
+        logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型。按原样使用提示。")
+
     try:
         response = client.chat.completions.create(
             model=current_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt_content}
+                {"role": "user", "content": final_user_prompt_content}
             ],
             # 对于纯文本输出，不指定 response_format 或使用默认
         )
