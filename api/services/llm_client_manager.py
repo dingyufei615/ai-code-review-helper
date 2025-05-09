@@ -1,4 +1,5 @@
 import logging
+import re # 新增导入
 from openai import OpenAI
 from api.core_config import app_configs
 
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 openai_client = None
 
 # 定义思考模型列表
-thinking_model_names = ["qwen3:32b", "qwen3:30b"]  # 您可以根据需要扩展此列表
+thinking_model_names = ["qwen3:32b", "qwen3:30b","qwen3:235b"]  # 您可以根据需要扩展此列表
 
 
 def _prepare_llm_user_prompt(base_prompt: str, model_name: str, context_description: str) -> str:
@@ -102,7 +103,13 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
         if response and response.choices and len(response.choices) > 0:
             message = response.choices[0].message
             if message and message.content:
-                return message.content.strip()
+                # 首先获取原始响应内容
+                raw_content = message.content
+                # 移除 <think>...</think> 标签及其内容
+                # re.DOTALL 使 . 匹配换行符
+                cleaned_content = re.sub(r"<think>.*?</?think>", "", raw_content, flags=re.DOTALL)
+                # 然后去除首尾空白
+                return cleaned_content.strip()
             else:
                 logger.error(f"LLM 响应中缺少 'content' 字段 ({context_description})。响应: {response}")
                 return f"Error: LLM response missing content for {context_description}."
