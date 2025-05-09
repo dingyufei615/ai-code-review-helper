@@ -1,7 +1,7 @@
 from flask import request, abort, jsonify
 import json
 import logging
-from api.app_factory import app, executor # 导入 executor
+from api.app_factory import app, executor, handle_async_task_exception # 导入 executor 和回调
 from api.core_config import (
     github_repo_configs, gitlab_project_configs, app_configs,
     is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
@@ -211,7 +211,7 @@ def github_webhook():
         return "提交已处理", 200
 
     # 调用提取出来的核心处理逻辑函数 (异步执行)
-    executor.submit(
+    future = executor.submit(
         _process_github_detailed_payload,
         access_token=access_token,
         owner=owner,
@@ -225,6 +225,7 @@ def github_webhook():
         pr_source_branch=pr_source_branch,
         pr_target_branch=pr_target_branch
     )
+    future.add_done_callback(handle_async_task_exception)
     
     logger.info(f"GitHub (详细审查): PR {repo_full_name}#{pull_number} 的处理任务已提交到后台执行。")
     return jsonify({"message": "GitHub Detailed Webhook processing task accepted."}), 202
@@ -405,7 +406,7 @@ def gitlab_webhook():
         return "提交已处理", 200
 
     # 调用提取出来的核心处理逻辑函数 (异步执行)
-    executor.submit(
+    future = executor.submit(
         _process_gitlab_detailed_payload,
         access_token=access_token,
         project_id_str=project_id_str,
@@ -418,6 +419,7 @@ def gitlab_webhook():
         mr_url=mr_url,
         project_name_from_payload=project_name_from_payload
     )
+    future.add_done_callback(handle_async_task_exception)
 
     logger.info(f"GitLab (详细审查): MR {project_id_str}#{mr_iid} 的处理任务已提交到后台执行。")
     return jsonify({"message": "GitLab Detailed Webhook processing task accepted."}), 202
