@@ -10,8 +10,8 @@ from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import (
     get_github_pr_changes, add_github_pr_comment, 
     get_gitlab_mr_changes, add_gitlab_mr_comment,
-    add_github_pr_coarse_comment, # Used for final summary
-    add_gitlab_mr_coarse_comment  # Used for final summary
+    add_github_pr_general_comment, # Used for final summary
+    add_gitlab_mr_general_comment  # Used for final summary
 )
 from api.services.llm_service import get_openai_code_review
 from api.services.notification_service import send_to_wecom_bot
@@ -137,7 +137,7 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
         logger.warning(f"警告: GitHub (详细审查) PR {repo_full_name}#{pull_number} 的 head_sha 为空。无法标记为已处理。")
 
     final_comment_text = get_final_summary_comment_text()
-    add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, final_comment_text)
+    add_github_pr_general_comment(owner, repo_name, pull_number, access_token, final_comment_text)
 
 
 @app.route('/github_webhook', methods=['POST'])
@@ -339,7 +339,7 @@ def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_
         mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), position_info.get("head_sha"))
 
     final_comment_text = get_final_summary_comment_text()
-    add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, final_comment_text)
+    add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, final_comment_text)
 
 
 @app.route('/gitlab_webhook', methods=['POST'])

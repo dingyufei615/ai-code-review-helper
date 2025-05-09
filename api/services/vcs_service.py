@@ -245,7 +245,7 @@ def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = Fals
         return None
 
 
-def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number: int, access_token: str, pr_data: dict):
+def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_number: int, access_token: str, pr_data: dict):
     """
     为 GitHub PR 获取粗粒度审查所需的数据：文件列表、每个文件的 diff、旧内容和新内容。
     pr_data 是 GitHub PR webhook 负载中的 'pull_request' 对象。
@@ -272,7 +272,7 @@ def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number
         "Accept": "application/vnd.github.v3.raw" # Gets raw content directly
     }
 
-    coarse_review_data = []
+    general_review_data = []
 
     try:
         logger.info(f"从 {files_url} 获取 PR 文件列表 (用于粗粒度审查)。")
@@ -307,7 +307,7 @@ def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number
                 logger.info(f"获取旧内容: {path_for_old_content} (ref: {base_sha}) 从 {old_content_url}")
                 file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers_content_api, is_github=False, max_size_bytes=1024*1024) # Not raw, expect JSON, add size limit
 
-            coarse_review_data.append(file_data_entry)
+            general_review_data.append(file_data_entry)
 
     except requests.exceptions.RequestException as e:
         logger.error(f"从 GitHub API ({files_url}) 获取粗粒度审查数据时出错: {e}")
@@ -316,10 +316,10 @@ def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number
         logger.exception(f"为 {owner}/{repo_name} PR {pull_number} 准备粗粒度审查数据时发生意外错误:")
         return None
 
-    return coarse_review_data
+    return general_review_data
 
 
-def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_token: str, mr_attrs: dict, position_info: dict):
+def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_token: str, mr_attrs: dict, position_info: dict):
     """
     为 GitLab MR 获取粗粒度审查所需的数据：文件列表、每个文件的 diff、旧内容和新内容。
     mr_attrs 是 GitLab MR webhook 负载中的 'object_attributes'。
@@ -343,7 +343,7 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
         return None
 
     headers = {"PRIVATE-TOKEN": access_token}
-    coarse_review_data = []
+    general_review_data = []
 
     # GitLab MR changes are typically fetched via versions API then details of latest version
     # This gives us the diffs. We then fetch content for each file.
@@ -403,7 +403,7 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
                 logger.info(f"获取旧内容 (GitLab): {path_for_old_content} (ref: {base_sha})")
                 file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers, max_size_bytes=1024*1024)
             
-            coarse_review_data.append(file_data_entry)
+            general_review_data.append(file_data_entry)
 
     except requests.exceptions.RequestException as e:
         logger.error(f"从 GitLab API ({version_detail_url}) 获取粗粒度审查数据时出错: {e}")
@@ -412,7 +412,7 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
         logger.exception(f"为 GitLab MR {project_id}#{mr_iid} 准备粗粒度审查数据时发生意外错误:")
         return None
         
-    return coarse_review_data
+    return general_review_data
 
 
 def add_github_pr_comment(owner, repo_name, pull_number, access_token, review, head_sha):
@@ -612,7 +612,7 @@ def add_gitlab_mr_comment(project_id, mr_iid, access_token, review, position_inf
         return False
 
 
-def add_github_pr_coarse_comment(owner: str, repo_name: str, pull_number: int, access_token: str, review_text: str):
+def add_github_pr_general_comment(owner: str, repo_name: str, pull_number: int, access_token: str, review_text: str):
     """向 GitHub Pull Request 添加一个通用的粗粒度审查评论。"""
     if not access_token:
         logger.error("错误: 无法添加粗粒度评论，缺少访问令牌。")
@@ -647,7 +647,7 @@ def add_github_pr_coarse_comment(owner: str, repo_name: str, pull_number: int, a
         return False
 
 
-def add_gitlab_mr_coarse_comment(project_id: str, mr_iid: int, access_token: str, review_text: str):
+def add_gitlab_mr_general_comment(project_id: str, mr_iid: int, access_token: str, review_text: str):
     """向 GitLab Merge Request 添加一个通用的粗粒度审查讨论/评论。"""
     if not access_token:
         logger.error("错误: 无法添加粗粒度评论，缺少访问令牌。")

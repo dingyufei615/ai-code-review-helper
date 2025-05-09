@@ -10,8 +10,8 @@ from .llm_client_manager import (
 # 从 llm_review_detailed_service 导入
 from .llm_review_detailed_service import get_openai_code_review
 
-# 从 llm_review_coarse_service 导入
-from .llm_review_coarse_service import get_openai_code_review_coarse
+# 从 llm_review_general_service 导入
+from .llm_review_general_service import get_openai_code_review_general
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ __all__ = [
     "initialize_openai_client",
     "get_openai_client",
     "get_openai_code_review",
-    "get_openai_code_review_coarse",
+    "get_openai_code_review_general",
 ]
 
 logger.info("LLM 服务外观已初始化，将重定向到专门的服务。")

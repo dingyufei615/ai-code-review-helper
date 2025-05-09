@@ -8,11 +8,11 @@ from api.core_config import (
 )
 from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import (
-    get_github_pr_data_for_coarse_review, add_github_pr_coarse_comment,
-    get_gitlab_mr_data_for_coarse_review, add_gitlab_mr_coarse_comment,
+    get_github_pr_data_for_general_review, add_github_pr_general_comment,
+    get_gitlab_mr_data_for_general_review, add_gitlab_mr_general_comment,
     get_gitlab_mr_changes # 新增导入
 )
-from api.services.llm_service import get_openai_code_review_coarse
+from api.services.llm_service import get_openai_code_review_general
 from api.services.notification_service import send_to_wecom_bot
 from api.services.common_service import get_final_summary_comment_text
 from .webhook_helpers import _save_review_results_and_log
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def _process_github_general_payload(access_token, owner, repo_name, pull_number, pr_data, head_sha, repo_full_name, pr_title, pr_html_url, repo_web_url, pr_source_branch, pr_target_branch):
     """实际处理 GitHub 通用审查的核心逻辑。"""
     logger.info("GitHub (通用审查): 正在获取 PR 数据 (diffs 和文件内容)...")
-    file_data_list = get_github_pr_data_for_coarse_review(owner, repo_name, pull_number, access_token, pr_data)
+    file_data_list = get_github_pr_data_for_general_review(owner, repo_name, pull_number, access_token, pr_data)
 
     if file_data_list is None:
         logger.warning("GitHub (通用审查): 获取 PR 数据失败。中止审查。")
@@ -37,7 +37,7 @@ def _process_github_general_payload(access_token, owner, repo_name, pull_number,
         )
         return
 
-    aggregated_coarse_reviews_for_storage = []
+    aggregated_general_reviews_for_storage = []
     files_with_issues_details = [] # {file_path: str, issues_text: str}
 
     logger.info(f'GitHub (通用审查): 将对 {len(file_data_list)} 个文件逐一发送给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
@@ -45,7 +45,7 @@ def _process_github_general_payload(access_token, owner, repo_name, pull_number,
     for file_item in file_data_list:
         current_file_path = file_item.get("file_path", "Unknown File")
         logger.info(f"GitHub (通用审查): 正在对文件 {current_file_path} 进行 LLM 审查...")
-        review_text_for_file = get_openai_code_review_coarse(file_item) # Pass single file_item
+        review_text_for_file = get_openai_code_review_general(file_item) # Pass single file_item
 
         logger.info(f"GitHub (通用审查): 文件 {current_file_path} 的 LLM 原始输出:\n{review_text_for_file}")
 
@@ -57,25 +57,25 @@ def _process_github_general_payload(access_token, owner, repo_name, pull_number,
             
             logger.info(f"GitHub (通用审查): 文件 {current_file_path} 发现问题。正在添加评论...")
             comment_text_for_pr = f"**AI 审查意见 (文件: `{current_file_path}`)**\n\n{review_text_for_file}"
-            add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, comment_text_for_pr)
+            add_github_pr_general_comment(owner, repo_name, pull_number, access_token, comment_text_for_pr)
             
             files_with_issues_details.append({"file": current_file_path, "issues": review_text_for_file})
 
             review_wrapper_for_file = {
                 "file": current_file_path,
                 "lines": {"old": None, "new": None},
-                "category": "Coarse Review",
+                "category": "general Review",
                 "severity": "INFO",
                 "analysis": review_text_for_file,
                 "suggestion": "请参考上述分析。"
             }
-            aggregated_coarse_reviews_for_storage.append(review_wrapper_for_file)
+            aggregated_general_reviews_for_storage.append(review_wrapper_for_file)
         else:
             logger.info(f"GitHub (通用审查): 文件 {current_file_path} 未发现问题、审查意见为空或指示无问题。")
 
     # After processing all files
-    if aggregated_coarse_reviews_for_storage:
-        review_json_string_for_storage = json.dumps(aggregated_coarse_reviews_for_storage)
+    if aggregated_general_reviews_for_storage:
+        review_json_string_for_storage = json.dumps(aggregated_general_reviews_for_storage)
         _save_review_results_and_log(
             vcs_type='github_general',
             identifier=repo_full_name,
@@ -86,7 +86,7 @@ def _process_github_general_payload(access_token, owner, repo_name, pull_number,
     else:
         logger.info("GitHub (通用审查): 所有被检查的文件均未发现问题。")
         no_issues_text = f"AI General Code Review 已完成，对 {len(file_data_list)} 个文件的检查均未发现主要问题或无审查建议。"
-        add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, no_issues_text)
+        add_github_pr_general_comment(owner, repo_name, pull_number, access_token, no_issues_text)
         _save_review_results_and_log(
             vcs_type='github_general',
             identifier=repo_full_name,
@@ -119,7 +119,7 @@ def _process_github_general_payload(access_token, owner, repo_name, pull_number,
 
     # 添加最终总结评论
     final_comment_text = get_final_summary_comment_text()
-    add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, final_comment_text)
+    add_github_pr_general_comment(owner, repo_name, pull_number, access_token, final_comment_text)
 
 
 @app.route('/github_webhook_general', methods=['POST'])
@@ -148,7 +148,7 @@ def github_webhook_general():
     access_token = config.get('token')
 
     if not verify_github_signature(request, webhook_secret):
-        abort(401, "GitHub signature verification failed (coarse).")
+        abort(401, "GitHub signature verification failed (general).")
 
     event_type = request.headers.get('X-GitHub-Event')
     if event_type != "pull_request":
@@ -216,7 +216,7 @@ def github_webhook_general():
 def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_attrs, final_position_info, head_sha_payload, current_commit_sha_for_ops, project_name_from_payload, project_web_url, mr_title, mr_url):
     """实际处理 GitLab 通用审查的核心逻辑。"""
     logger.info("GitLab (通用审查): 正在获取 MR 数据 (diffs 和文件内容)...")
-    file_data_list = get_gitlab_mr_data_for_coarse_review(project_id_str, mr_iid, access_token, mr_attrs, final_position_info)
+    file_data_list = get_gitlab_mr_data_for_general_review(project_id_str, mr_iid, access_token, mr_attrs, final_position_info)
 
     if file_data_list is None:
         logger.warning("GitLab (通用审查): 获取 MR 数据失败。中止审查。")
@@ -230,7 +230,7 @@ def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_att
         )
         return
 
-    aggregated_coarse_reviews_for_storage = []
+    aggregated_general_reviews_for_storage = []
     files_with_issues_details = [] # {file_path: str, issues_text: str}
 
     logger.info(f'GitLab (通用审查): 将对 {len(file_data_list)} 个文件逐一发送给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
@@ -238,7 +238,7 @@ def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_att
     for file_item in file_data_list:
         current_file_path = file_item.get("file_path", "Unknown File")
         logger.info(f"GitLab (通用审查): 正在对文件 {current_file_path} 进行 LLM 审查...")
-        review_text_for_file = get_openai_code_review_coarse(file_item)
+        review_text_for_file = get_openai_code_review_general(file_item)
 
         logger.info(f"GitLab (通用审查): 文件 {current_file_path} 的 LLM 原始输出:\n{review_text_for_file}")
 
@@ -250,25 +250,25 @@ def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_att
             
             logger.info(f"GitLab (通用审查): 文件 {current_file_path} 发现问题。正在添加评论...")
             comment_text_for_mr = f"**AI 审查意见 (文件: `{current_file_path}`)**\n\n{review_text_for_file}"
-            add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, comment_text_for_mr)
+            add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, comment_text_for_mr)
             
             files_with_issues_details.append({"file": current_file_path, "issues": review_text_for_file})
 
             review_wrapper_for_file = {
                 "file": current_file_path,
                 "lines": {"old": None, "new": None},
-                "category": "Coarse Review",
+                "category": "general Review",
                 "severity": "INFO",
                 "analysis": review_text_for_file,
                 "suggestion": "请参考上述分析。"
             }
-            aggregated_coarse_reviews_for_storage.append(review_wrapper_for_file)
+            aggregated_general_reviews_for_storage.append(review_wrapper_for_file)
         else:
             logger.info(f"GitLab (通用审查): 文件 {current_file_path} 未发现问题、审查意见为空或指示无问题。")
 
     # After processing all files
-    if aggregated_coarse_reviews_for_storage:
-        review_json_string_for_storage = json.dumps(aggregated_coarse_reviews_for_storage)
+    if aggregated_general_reviews_for_storage:
+        review_json_string_for_storage = json.dumps(aggregated_general_reviews_for_storage)
         _save_review_results_and_log(
             vcs_type='gitlab_general',
             identifier=project_id_str,
@@ -280,7 +280,7 @@ def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_att
     else:
         logger.info("GitLab (通用审查): 所有被检查的文件均未发现问题。")
         no_issues_text = f"AI General Code Review 已完成，对 {len(file_data_list)} 个文件的检查均未发现主要问题或无审查建议。"
-        add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, no_issues_text)
+        add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, no_issues_text)
         _save_review_results_and_log(
             vcs_type='gitlab_general',
             identifier=project_id_str,
@@ -316,7 +316,7 @@ def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_att
 
     # 添加最终总结评论
     final_comment_text = get_final_summary_comment_text()
-    add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, final_comment_text)
+    add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, final_comment_text)
 
 
 @app.route('/gitlab_webhook_general', methods=['POST'])
@@ -354,7 +354,7 @@ def gitlab_webhook_general():
     access_token = config.get('token')
 
     if not verify_gitlab_signature(request, webhook_secret):
-        abort(401, "GitLab signature verification failed (coarse).")
+        abort(401, "GitLab signature verification failed (general).")
 
     event_type = request.headers.get('X-Gitlab-Event')
     if event_type != "Merge Request Hook":

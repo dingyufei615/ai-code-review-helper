@@ -5,7 +5,7 @@ from .llm_client_manager import get_openai_client, execute_llm_chat_completion
 
 logger = logging.getLogger(__name__)
 
-COARSE_REVIEW_SYSTEM_PROMPT = """
+general_REVIEW_SYSTEM_PROMPT = """
 # 角色
 你是一名代码审查专家。你的任务是基于提供的单个代码文件变更（包括文件路径、变更状态、diff/patch 以及可选的旧版和新版完整文件内容），对此文件进行审查，并使用中文和用户交流。
 
@@ -42,7 +42,7 @@ COARSE_REVIEW_SYSTEM_PROMPT = """
 """
 
 
-def get_openai_code_review_coarse(file_data: dict):
+def get_openai_code_review_general(file_data: dict):
     """
     使用 OpenAI API 对单个文件的代码变更进行粗粒度的审查。
     接收一个文件数据字典，包含路径、diff、旧内容和新内容。
@@ -52,7 +52,7 @@ def get_openai_code_review_coarse(file_data: dict):
     client = get_openai_client()
     if not client:
         logger.warning("OpenAI 客户端不可用 (未初始化或初始化失败)。跳过单个文件的粗粒度审查。")
-        return "OpenAI client is not available. Skipping coarse review for single file."
+        return "OpenAI client is not available. Skipping general review for single file."
     if not file_data:
         logger.info("未提供文件数据以供单个文件的粗粒度审查。")
         return ""
@@ -61,7 +61,7 @@ def get_openai_code_review_coarse(file_data: dict):
         user_prompt_content_for_llm = json.dumps(file_data, ensure_ascii=False, indent=2)
     except TypeError as te:
         logger.error(f"序列化文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查输入数据时出错: {te}")
-        return f"Error serializing input data for coarse review of file {file_data.get('file_path', 'N/A')}."
+        return f"Error serializing input data for general review of file {file_data.get('file_path', 'N/A')}."
 
     current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
     logger.info(f"正在发送文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查请求给 {current_model}...")
@@ -71,12 +71,12 @@ def get_openai_code_review_coarse(file_data: dict):
         client = get_openai_client()
         if not client:
             logger.warning(f"在审查 {file_data.get('file_path', 'N/A')} 前 OpenAI 客户端变得不可用。")
-            return "OpenAI client is not available. Skipping coarse review for single file."
+            return "OpenAI client is not available. Skipping general review for single file."
 
         review_text = execute_llm_chat_completion(
             client,
             current_model,
-            COARSE_REVIEW_SYSTEM_PROMPT,
+            general_REVIEW_SYSTEM_PROMPT,
             user_prompt_content_for_llm,  # This is already the JSON string
             "粗粒度审查"
             # No response_format_type for plain text Markdown
@@ -88,4 +88,4 @@ def get_openai_code_review_coarse(file_data: dict):
         return review_text
     except Exception as e:
         logger.exception("从 OpenAI 获取粗粒度代码审查时出错:")
-        return f"Error during coarse code review with OpenAI: {e}"
+        return f"Error during general code review with OpenAI: {e}"
