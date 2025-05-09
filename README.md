@@ -6,16 +6,17 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 
 - **Webhook 集成**: 支持 GitHub 和 GitLab，自动监听代码变更。
 - **智能代码分析**:
-    - **详细行级审查**: 结构化 JSON 输出，定位到具体代码行。
-    - **通用审查**: Markdown 格式整体审查意见。
+    - **详细行级审查**: 对每次提交的完整 diff 进行分析，输出结构化的 JSON 审查意见，可定位到具体代码行。
+    - **通用审查**: 对每个变更的文件进行单独分析，输出 Markdown 格式的审查意见。
 - **自动化评论**: AI 审查意见自动发布到 PR/MR。
+- **异步处理**: Webhook 请求被快速接受，实际的代码分析和评论在后台异步执行，提高系统响应速度和吞吐量。
 - **配置管理**:
     - 环境变量基础配置。
-    - Web 管理面板 (`/admin`)：动态管理仓库/项目、LLM 及通知设置。
+    - Web 管理面板 (`/admin`)：动态管理 GitHub/GitLab 仓库/项目配置 (Webhook Secret, Access Token, GitLab 实例 URL)、LLM 配置 (模型、API Key、Base URL)、通知配置 (企业微信 Webhook URL)，并可查阅 AI 审查记录。管理面板的访问和操作受 Admin API Key 保护。
     - 安全 API 接口：编程方式管理配置。
-    - Redis 持久化 (可选)：存储配置和已处理 Commit。
+    - Redis 持久化：存储仓库/项目配置、已处理的 Commit SHA 以及 AI 审查结果。全局应用配置（如 LLM 设置、通知设置）主要通过环境变量设定，管理面板的修改在内存中生效并优先于环境变量，服务重启后会从环境变量重新加载。
 - **通知服务**: Code Review 摘要发送到企业微信。
-- **防止重复处理**: Redis 记录已处理 Commit SHA。
+- **防止重复处理**: Redis 记录已处理 Commit SHA，避免对同一 Commit 的重复审查。
 - **友好提示**: AI 未发现问题时自动评论。
 - **审查结果存储与查阅**: Redis 存储，管理面板查阅历史。
 - **自动清理**: PR/MR 关闭或合并时，清理 Redis 相关记录。
@@ -24,7 +25,7 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 
 ## 系统架构
 
-应用通过以下模块协同工作：VCS Webhooks -> Webhook 处理 -> VCS 服务 -> LLM 服务 -> 配置管理 -> 通知服务 -> Web 应用 (Flask)。
+应用通过以下模块协同工作：VCS Webhooks -> Webhook 快速响应与任务分发 -> 异步任务执行 (VCS 服务交互、LLM 服务调用) -> 结果处理 (评论、通知、存储) -> 配置管理 -> Web 应用 (Flask)。
 
 ## 安装与部署
 
@@ -79,17 +80,16 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 -   (更多变量如 `SERVER_HOST`, `SERVER_PORT`, `GITHUB_API_URL`, `GITLAB_INSTANCE_URL`, `REDIS_PORT`, `REDIS_PASSWORD` 等请参考启动日志或源码。)
 
 ### 2. 管理面板 (`/admin`)
-浏览器访问 `http://<your_server_host>:<your_server_port>/admin`。首次访问需输入 `Admin API Key`。
+浏览器访问 `http://<your_server_host>:<your_server_port>/admin`。首次访问或 Cookie 失效时，会提示输入 `Admin API Key` (该 Key 本身通过环境变量 `ADMIN_API_KEY` 设置，面板仅用于验证和临时保存于 Cookie)。
 功能包括：
-- GitHub/GitLab 仓库/项目配置 (Webhook Secret, Access Token, GitLab 实例 URL)。
-- LLM 配置 (覆盖环境变量)。
-- 通知配置 (企业微信 Webhook URL)。
-- Admin API Key 设置。
-- AI 审查记录查阅。
+- **GitHub/GitLab 配置**: 添加、查看和删除各仓库/项目的 Webhook Secret、Access Token 以及 GitLab 项目特定的实例 URL。
+- **LLM 配置**: 查看和修改 OpenAI API Base URL、API Key 和模型名称。这些修改在当前运行时优先于环境变量，服务重启后会恢复为环境变量的设置。
+- **通知配置**: 查看和修改企业微信机器人的 Webhook URL。
+- **AI 审查记录查阅**: 查看已完成的 AI 审查结果列表，并可点击查看特定 PR/MR 在不同 Commit 下的详细审查意见。
 
 **配置持久化**:
-- **Redis**: 仓库/项目配置、已处理 Commit SHA、AI 审查结果。
-- **内存**: 全局应用配置 (LLM, 通知) 通过面板修改后仅内存生效，优先于环境变量；重启后从环境变量恢复。建议通过环境变量设置全局配置。
+- **Redis**: 仓库/项目配置 (如 Webhook Secret, Token)、已处理 Commit SHA 的集合、AI 审查结果 (包含详细评论内容，默认7天过期)。
+- **内存与环境变量**: 全局应用配置 (如 OpenAI API Key/URL/Model, 企业微信 Webhook URL, Redis 连接参数等) 主要通过环境变量在服务启动时加载。管理面板对这些全局配置的修改仅在当前运行时内存中生效，并优先于环境变量；服务重启后将从环境变量重新加载。因此，对于需要持久化的全局配置，建议直接修改环境变量并重启服务。
 
 ### 3. 配置 API
 通过 API 端点管理配置，需 `X-Admin-API-Key` 请求头。
