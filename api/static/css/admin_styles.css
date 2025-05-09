@@ -44,8 +44,13 @@ body {
     transition: background-color 0.3s ease;
 }
 
-.sidebar ul li a:hover, .sidebar ul li a.active {
-    background-color: #3498db;
+.sidebar ul li a:hover {
+    background-color: #3498db; /* 鼠标悬停时背景色 */
+}
+.sidebar ul li a.active {
+    background-color: #2980b9; /* 活动链接使用更深的背景色 */
+    color: #fff; /* 确保文字颜色为白色 */
+    font-weight: bold; /* 加粗字体 */
 }
 
 .main-content {
@@ -139,6 +144,10 @@ button.delete-btn:hover {
     align-items: center;
 }
 
+.config-list li:hover {
+    background-color: #e0e6e8; /* 为普通配置列表项添加悬停效果 */
+}
+
 .config-list li span {
     word-break: break-all;
 }
@@ -194,24 +203,40 @@ button.delete-btn:hover {
 #aiReviewResultsSection .pr-mr-list li:hover {
     background-color: #e9e9e9;
 }
+#aiReviewResultsSection .pr-mr-list li.active { /* 新增：AI审查记录列表选中项的样式 */
+    background-color: #d1eaff;
+    border-left: 3px solid #3498db;
+    font-weight: bold;
+}
+#refreshReviewResultsList { /* 美化刷新按钮 */
+    margin-bottom: 15px;
+    background-color: #28a745; /* 使用绿色表示刷新操作 */
+}
+#refreshReviewResultsList:hover {
+    background-color: #218838;
+}
 #aiReviewResultsSection .commit-details {
-    margin-top: 15px;
-    padding: 15px;
-    border: 1px solid #ddd;
+    margin-top: 20px; /* 增加与上方元素的间距 */
+    padding: 20px; /* 增加内边距 */
+    border: 1px solid #dce4e9; /* 边框颜色调整 */
     border-radius: 5px;
     background-color: #fdfdfd;
 }
 #aiReviewResultsSection .commit-details h4 {
     margin-top: 0;
-    border-bottom: 1px solid #eee;
-    padding-bottom: 5px;
+    margin-bottom: 15px; /* 增加与下方内容的间距 */
+    border-bottom: 1px solid #ddd; /* 边框颜色调整 */
+    padding-bottom: 10px; /* 增加内边距 */
+    color: #2c3e50; /* 标题颜色与页面主标题一致 */
+    font-size: 1.15em; /* 略微增大字体 */
 }
 #aiReviewResultsSection .review-item {
-    margin-bottom: 10px;
-    padding: 10px;
-    border: 1px solid #e0e0e0;
-    border-radius: 3px;
+    margin-bottom: 15px; /* 增加审查项之间的间距 */
+    padding: 15px; /* 增加内边距 */
+    border: 1px solid #e0e6e8; /* 边框颜色调整 */
+    border-radius: 4px;
     background-color: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* 添加细微阴影增加层次感 */
 }
 #aiReviewResultsSection .review-item p {
     margin: 5px 0;
@@ -220,9 +245,13 @@ button.delete-btn:hover {
     color: #333;
 }
 #aiReviewResultsSection .review-item pre {
-    background-color: #f0f0f0;
-    padding: 8px;
-    border-radius: 3px;
+    background-color: #f8f9fa; /* 代码块背景色调整 */
+    border: 1px solid #e9ecef; /* 代码块边框 */
+    padding: 12px; /* 增加内边距 */
+    border-radius: 4px;
     white-space: pre-wrap;
     word-wrap: break-word;
+    color: #212529; /* 代码块文字颜色 */
+    font-size: 0.9em; /* 调整字体大小 */
+    line-height: 1.5; /* 调整行高 */
 }

@@ -565,39 +565,60 @@
     // --- AI Review Results Functions ---
     const reviewedPrMrListUl = document.getElementById('reviewedPrMrList');
     const reviewDetailsContainer = document.getElementById('reviewDetailsContainer');
+    const refreshReviewResultsListButton = document.getElementById('refreshReviewResultsList');
+
 
     async function loadReviewedPrMrList() {
+        const originalButtonText = refreshReviewResultsListButton.textContent;
+        refreshReviewResultsListButton.disabled = true;
+        refreshReviewResultsListButton.textContent = '正在刷新...';
+
         reviewedPrMrListUl.innerHTML = '<li>正在加载审查记录...</li>';
         reviewDetailsContainer.innerHTML = ''; // Clear previous details
 
-        const data = await fetchData('/config/review_results/list');
-        if (data && data.reviewed_pr_mr_list) {
-            reviewedPrMrListUl.innerHTML = '';
-            if (data.reviewed_pr_mr_list.length === 0) {
+        try {
+            const data = await fetchData('/config/review_results/list');
+            if (data && data.reviewed_pr_mr_list) {
+                reviewedPrMrListUl.innerHTML = '';
+                if (data.reviewed_pr_mr_list.length === 0) {
+                    reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
+                    return;
+                }
+                data.reviewed_pr_mr_list.forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = item.display_name; // Using display_name from backend
+                    li.dataset.vcsType = item.vcs_type;
+                    li.dataset.identifier = item.identifier;
+                    li.dataset.prMrId = item.pr_mr_id;
+                    li.onclick = (event) => { // Modified to handle active state
+                        // Remove 'active' class from all other list items
+                        const allItems = reviewedPrMrListUl.querySelectorAll('li');
+                        allItems.forEach(sibling => sibling.classList.remove('active'));
+                        // Add 'active' class to the clicked item
+                        event.currentTarget.classList.add('active');
+                        loadSpecificReviewDetails(item.vcs_type, item.identifier, item.pr_mr_id);
+                    };
+                    reviewedPrMrListUl.appendChild(li);
+                });
+            } else if (data) { // Empty list is valid
                 reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
-                return;
+            } else {
+                reviewedPrMrListUl.innerHTML = '<li>加载审查记录失败。请检查 Admin API Key 或网络。</li>';
             }
-            data.reviewed_pr_mr_list.forEach(item => {
-                const li = document.createElement('li');
-                li.textContent = item.display_name; // Using display_name from backend
-                li.dataset.vcsType = item.vcs_type;
-                li.dataset.identifier = item.identifier;
-                li.dataset.prMrId = item.pr_mr_id;
-                li.onclick = () => loadSpecificReviewDetails(item.vcs_type, item.identifier, item.pr_mr_id);
-                reviewedPrMrListUl.appendChild(li);
-            });
-        } else if (data) { // Empty list is valid
-            reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
-        } else {
-            reviewedPrMrListUl.innerHTML = '<li>加载审查记录失败。请检查 Admin API Key 或网络。</li>';
+        } catch (error) {
+            console.error("Error in loadReviewedPrMrList:", error);
+            reviewedPrMrListUl.innerHTML = '<li>加载审查记录时发生错误。</li>';
+            showStatus('加载审查记录列表时出错。', true);
+        } finally {
+            refreshReviewResultsListButton.disabled = false;
+            refreshReviewResultsListButton.textContent = originalButtonText;
         }
     }
 
     async function loadSpecificReviewDetails(vcsType, identifier, prMrId) {
-        reviewDetailsContainer.innerHTML = '<h4>正在加载详细审查结果...</h4>';
+        reviewDetailsContainer.innerHTML = '<h4><i class="fas fa-spinner fa-spin"></i> 正在加载详细审查结果...</h4>'; // Improved loading message
         const url = `/config/review_results/${vcsType}/${encodeURIComponent(identifier)}/${prMrId}`;
         const data = await fetchData(url);
-
         if (data && data.all_reviews_by_commit) {
             const displayTitleIdentifier = data.display_identifier || identifier;
             reviewDetailsContainer.innerHTML = ''; // 清空之前的内容
