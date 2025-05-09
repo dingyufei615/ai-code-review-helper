@@ -215,7 +215,7 @@ def save_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sh
         # 使用 pipeline 保证原子性
         pipe = redis_client.pipeline()
         pipe.hset(redis_key, commit_sha, review_json_string)
-        if vcs_type == 'gitlab' and project_name:
+        if vcs_type.startswith('gitlab') and project_name: # 确保 'gitlab' 和 'gitlab_general' 都能保存项目名
             # 仅在首次或需要更新时设置项目名称
             # 如果 _project_name 已存在且不同，可以选择是否覆盖，这里简单覆盖
             pipe.hset(redis_key, "_project_name", project_name)
