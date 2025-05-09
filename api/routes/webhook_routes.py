@@ -718,7 +718,7 @@ def gitlab_webhook_general():
         logger.info(f"GitLab (通用审查): 文件 {current_file_path} 的 LLM 原始输出:\n{review_text_for_file}")
 
         if review_text_for_file and review_text_for_file.strip() and \
-           "未发现严重问题" not in review_text_for_file and \
+           "此文件未发现问题" not in review_text_for_file and \
            "没有修改建议" not in review_text_for_file and \
            "OpenAI client is not available" not in review_text_for_file and \
            "Error serializing input data" not in review_text_for_file:

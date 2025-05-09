@@ -295,21 +295,8 @@ def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number
                 "file_path": file_path,
                 "status": status,
                 "diff_text": diff_text,
-                "old_content": None,
-                "new_content": None
+                "old_content": None
             }
-
-            # 获取新内容 (适用于 'added', 'modified')
-            if status in ['added', 'modified'] and raw_url:
-                # Max file size to fetch, e.g., 1MB
-                if file_item.get('changes', 0) > 0 or file_item.get('additions', 0) > 0 or status == 'added': # Heuristic: only fetch if there are changes or it's new
-                    if file_item.get('size', 0) < 1024 * 1024: # Check size if available from files API
-                         logger.info(f"获取新内容: {file_path} 从 {raw_url}")
-                         file_data_entry["new_content"] = _fetch_file_content_from_url(raw_url, headers_raw_content_api, is_github=True)
-                    else:
-                        logger.warning(f"文件 {file_path} 过大 ({file_item.get('size')} bytes)，跳过获取新内容。")
-                        file_data_entry["new_content"] = f"[Content not fetched: File size ({file_item.get('size')} bytes) exceeds limit]"
-
 
             # 获取旧内容 (适用于 'modified', 'removed', 'renamed')
             path_for_old_content = previous_filename if status == 'renamed' and previous_filename else file_path
@@ -402,21 +389,11 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
                 "file_path": new_path, # For deleted files, new_path is the path of the deleted file
                 "status": status,
                 "diff_text": diff_text,
-                "old_content": None,
-                "new_content": None
+                "old_content": None
             }
 
             # GitLab file content API: /projects/:id/repository/files/:file_path?ref=:sha
             # File path needs to be URL-encoded.
-
-            # Get new content (if not deleted)
-            if not is_deleted and new_path:
-                # GitLab diff_item 'size' is not standard, rely on fetch helper's limits
-                encoded_new_path = requests.utils.quote(new_path, safe='')
-                new_content_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/repository/files/{encoded_new_path}?ref={head_sha}"
-                logger.info(f"获取新内容 (GitLab): {new_path} (ref: {head_sha})")
-                file_data_entry["new_content"] = _fetch_file_content_from_url(new_content_url, headers, max_size_bytes=1024*1024)
-
 
             # Get old content (if not new file)
             path_for_old_content = old_path if old_path else new_path # If renamed, old_path is correct. If modified, old_path is same as new_path.

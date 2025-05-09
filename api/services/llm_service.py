@@ -250,8 +250,8 @@ def get_openai_code_review(structured_file_changes):
 
             final_user_prompt = prompt
             if current_model in thinking_model_names:
-                logger.info(f"当前模型 {current_model} 是一个思考模型 (细粒度审查)。将在提示前添加 '/nothink'。")
-                final_user_prompt = "/nothink " + prompt
+                logger.info(f"当前模型 {current_model} 是一个思考模型 (细粒度审查)。将在提示前添加 '/no_think'。")
+                final_user_prompt = "/no_think " + prompt
             else:
                 logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型 (细粒度审查)。按原样使用提示。")
 
@@ -347,7 +347,7 @@ def get_openai_code_review_coarse(file_data: dict):
     *   **简要分析**: 对每个严重问题，用一两句话简要描述问题。
     *   **修改建议**: 针对每个严重问题，给出一两句核心的修改建议。
     *   如果文件的旧内容或新内容未提供（例如因为文件过大或为二进制文件），请基于可用的 diff 信息进行审查，并可以注明这一点。
-    *   **无严重问题**: 如果当前审查的文件没有发现严重问题，请返回一个**空字符串**或明确指出无问题，例如：“此文件未发现严重问题。”。
+    *   **无严重问题**: 如果当前审查的文件没有发现严重问题，请返回一个**空字符串**或明确指出无问题，例如：“此文件未发现问题。”。
 4.  **风格要求**:
     *   **极其简洁**: 避免任何不必要的寒暄、解释或背景信息。直接输出你的审查结果。
     *   **Markdown 格式**: 使用 Markdown 列表、代码块等元素清晰展示。例如，如果发现问题：
@@ -355,7 +355,7 @@ def get_openai_code_review_coarse(file_data: dict):
         - **问题**: 在第 25 行，直接使用了用户输入构建 SQL 查询，可能导致 SQL 注入。
         - **建议**: 使用参数化查询或 ORM 来处理数据库操作。
         ```
-        如果未发现问题，返回空字符串或：“此文件未发现严重问题。”
+        如果未发现问题，返回空字符串或：“此文件未发现问题。”
 
 # 输入数据格式
 你将收到一个 JSON 字符串，它代表**一个文件**的变更对象，结构如下：
@@ -363,8 +363,7 @@ def get_openai_code_review_coarse(file_data: dict):
   "file_path": "string, 文件的完整路径",
   "status": "string, 变更状态 ('added', 'modified', 'deleted', 'renamed')",
   "diff_text": "string, 该文件的 diff/patch 内容",
-  "old_content": "string or null, 变更前的文件完整内容 (如果是新增文件则为 null)",
-  "new_content": "string or null, 变更后的文件完整内容 (如果是删除文件则为 null)"
+  "old_content": "string or null, 变更前的文件完整内容 (如果是新增文件则为 null)"
 }
 
 请现在根据这些指令，对我接下来提供的单个文件变更（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的中文审查意见。
@@ -382,8 +381,8 @@ def get_openai_code_review_coarse(file_data: dict):
 
     final_user_prompt_content = user_prompt_content
     if current_model in thinking_model_names:
-        logger.info(f"当前模型 {current_model} 是一个思考模型。将在提示前添加 '/nothink'。")
-        final_user_prompt_content = "/nothink " + user_prompt_content
+        logger.info(f"当前模型 {current_model} 是一个思考模型。将在提示前添加 '/no_think'。")
+        final_user_prompt_content = "/no_think " + user_prompt_content
     else:
         logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型。按原样使用提示。")
 
