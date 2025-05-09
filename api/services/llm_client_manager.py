@@ -97,5 +97,21 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
     if response_format_type:
         completion_params["response_format"] = {"type": response_format_type}
 
-    response = client.chat.completions.create(**completion_params)
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(**completion_params)
+        if response and response.choices and len(response.choices) > 0:
+            message = response.choices[0].message
+            if message and message.content:
+                return message.content.strip()
+            else:
+                logger.error(f"LLM 响应中缺少 'content' 字段 ({context_description})。响应: {response}")
+                return f"Error: LLM response missing content for {context_description}."
+        else:
+            logger.error(f"LLM 响应无效或 choices 为空 ({context_description})。响应: {response}")
+            return f"Error: Invalid LLM response or empty choices for {context_description}."
+    except openai_client.APIError as e: # openai_client is the OpenAI class, APIError is a static member or accessible via instance
+        logger.error(f"LLM API 请求失败 ({context_description}): {e}")
+        return f"Error: LLM API request failed for {context_description}: {str(e)}"
+    except Exception as e:
+        logger.error(f"处理 LLM 响应时发生意外错误 ({context_description}): {e}")
+        return f"Error: Unexpected error during LLM processing for {context_description}: {str(e)}"
