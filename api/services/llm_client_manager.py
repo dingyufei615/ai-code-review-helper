@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 openai_client = None
 
 # 定义思考模型列表
-thinking_model_names = ["qwen3:32b", "qwen3:20b"]  # 您可以根据需要扩展此列表
+thinking_model_names = ["qwen3:32b", "qwen3:30b"]  # 您可以根据需要扩展此列表
 
 
 def _prepare_llm_user_prompt(base_prompt: str, model_name: str, context_description: str) -> str:
