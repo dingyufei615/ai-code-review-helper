@@ -1,7 +1,7 @@
 from flask import request, abort, jsonify
 import json
 import logging
-from api.app_factory import app
+from api.app_factory import app, executor # 导入 executor
 from api.core_config import (
     github_repo_configs, gitlab_project_configs, app_configs,
     is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
@@ -191,9 +191,9 @@ def github_webhook_general():
         logger.info(f"GitHub (通用审查): PR {repo_full_name}#{pull_number} 的提交 {head_sha} 已处理。跳过。")
         return "提交已处理", 200
 
-    # 调用提取出来的核心处理逻辑函数
-    # 在实际的异步实现中，这里会调用 .delay() 或 .apply_async()
-    _process_github_general_payload(
+    # 调用提取出来的核心处理逻辑函数 (异步执行)
+    executor.submit(
+        _process_github_general_payload,
         access_token=access_token,
         owner=owner,
         repo_name=repo_name,
@@ -208,8 +208,8 @@ def github_webhook_general():
         pr_target_branch=pr_target_branch
     )
     
-    logger.info(f"GitHub (通用审查): PR {repo_full_name}#{pull_number} 的处理任务已接受。")
-    return "GitHub General Webhook processing accepted.", 202
+    logger.info(f"GitHub (通用审查): PR {repo_full_name}#{pull_number} 的处理任务已提交到后台执行。")
+    return jsonify({"message": "GitHub General Webhook processing task accepted."}), 202
 
 
 def _process_gitlab_general_payload(access_token, project_id_str, mr_iid, mr_attrs, final_position_info, head_sha_payload, current_commit_sha_for_ops, project_name_from_payload, project_web_url, mr_title, mr_url):
@@ -399,8 +399,9 @@ def gitlab_webhook_general():
     
     current_commit_sha_for_ops = final_position_info.get("head_commit_sha", head_sha_payload)
 
-    # 调用提取出来的核心处理逻辑函数
-    _process_gitlab_general_payload(
+    # 调用提取出来的核心处理逻辑函数 (异步执行)
+    executor.submit(
+        _process_gitlab_general_payload,
         access_token=access_token,
         project_id_str=project_id_str,
         mr_iid=mr_iid,
@@ -414,5 +415,5 @@ def gitlab_webhook_general():
         mr_url=mr_url
     )
 
-    logger.info(f"GitLab (通用审查): MR {project_id_str}#{mr_iid} 的处理任务已接受。")
-    return "GitLab General Webhook processing accepted.", 202
+    logger.info(f"GitLab (通用审查): MR {project_id_str}#{mr_iid} 的处理任务已提交到后台执行。")
+    return jsonify({"message": "GitLab General Webhook processing task accepted."}), 202

@@ -1,8 +1,9 @@
 from flask import render_template
 import os
 import logging
+import atexit # 新增导入
 
-from api.app_factory import app
+from api.app_factory import app, executor # 导入 executor
 from api.core_config import (
     SERVER_HOST, SERVER_PORT, app_configs, ADMIN_API_KEY,
     init_redis_client, load_configs_from_redis
@@ -122,5 +123,9 @@ if __name__ == '__main__':
     logger.info(f"GitHub Webhook URL (通用审查): http://localhost:{SERVER_PORT}/github_webhook_general")
     logger.info(f"GitLab Webhook URL (通用审查): http://localhost:{SERVER_PORT}/gitlab_webhook_general")
     logger.info("--- ---")
+
+    # 注册 atexit 处理函数以关闭 ThreadPoolExecutor
+    atexit.register(lambda: executor.shutdown(wait=True))
+    logger.info("ThreadPoolExecutor shutdown hook registered.")
 
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)
