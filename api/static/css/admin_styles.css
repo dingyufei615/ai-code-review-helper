@@ -193,6 +193,9 @@ button.delete-btn:hover {
     padding: 0;
 }
 #aiReviewResultsSection .pr-mr-list li {
+    display: flex; /* Added for aligning text and button */
+    justify-content: space-between; /* Aligns text to left, button to right */
+    align-items: center; /* Vertically align items */
     padding: 10px;
     border: 1px solid #eee;
     margin-bottom: 8px;
@@ -200,7 +203,10 @@ button.delete-btn:hover {
     cursor: pointer;
     background-color: #f9f9f9;
 }
-#aiReviewResultsSection .pr-mr-list li:hover {
+#aiReviewResultsSection .pr-mr-list li > span:first-child:hover { /* Apply hover to text span */
+    background-color: #e9e9e9; /* Mimic original li:hover for the text part */
+}
+#aiReviewResultsSection .pr-mr-list li:hover { /* Keep general hover for whole item if needed, or remove if only span hover is desired */
     background-color: #e9e9e9;
 }
 #aiReviewResultsSection .pr-mr-list li.active { /* 新增：AI审查记录列表选中项的样式 */

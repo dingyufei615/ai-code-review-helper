@@ -590,14 +590,29 @@
                     li.dataset.vcsType = item.vcs_type;
                     li.dataset.identifier = item.identifier;
                     li.dataset.prMrId = item.pr_mr_id;
-                    li.onclick = (event) => { // Modified to handle active state
-                        // Remove 'active' class from all other list items
+
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = item.display_name;
+                    textSpan.style.flexGrow = "1"; // Allow text to take available space
+                    textSpan.onclick = (event) => {
+                        const currentLi = event.currentTarget.closest('li');
                         const allItems = reviewedPrMrListUl.querySelectorAll('li');
                         allItems.forEach(sibling => sibling.classList.remove('active'));
-                        // Add 'active' class to the clicked item
-                        event.currentTarget.classList.add('active');
+                        currentLi.classList.add('active');
                         loadSpecificReviewDetails(item.vcs_type, item.identifier, item.pr_mr_id);
                     };
+                    li.appendChild(textSpan);
+
+                    const deleteButton = document.createElement('button');
+                    deleteButton.textContent = '删除';
+                    deleteButton.className = 'delete-btn'; // Reuse existing delete button style
+                    deleteButton.style.marginLeft = '10px'; // Add some space
+                    deleteButton.onclick = (event) => {
+                        event.stopPropagation(); // Prevent li click event
+                        deleteReviewResult(item.vcs_type, item.identifier, item.pr_mr_id, li);
+                    };
+                    li.appendChild(deleteButton);
+
                     reviewedPrMrListUl.appendChild(li);
                 });
             } else if (data) { // Empty list is valid
@@ -680,6 +695,35 @@
             reviewDetailsContainer.innerHTML = `<p>错误: ${data.error}</p>`;
         } else {
             reviewDetailsContainer.innerHTML = '<p>加载详细审查结果失败。</p>';
+        }
+    }
+
+    async function deleteReviewResult(vcsType, identifier, prMrId, listItemElement) {
+        if (!confirm(`确定要删除 ${vcsType.toUpperCase()}: ${identifier} #${prMrId} 的所有审查记录吗？此操作不可恢复。`)) return;
+
+        const url = `/config/review_results/${vcsType}/${encodeURIComponent(identifier)}/${prMrId}`;
+        // fetchData's third argument is body, for DELETE it should be null or undefined.
+        // The function already handles API key and Content-Type.
+        const result = await fetchData(url, 'DELETE');
+
+        if (result && result.success) { // fetchData for DELETE returns {success: true, message: ...}
+            showStatus(result.message || '审查记录已成功删除。');
+            listItemElement.remove(); // Remove the item from the list
+
+            // If the list becomes empty, show the placeholder message
+            if (reviewedPrMrListUl.children.length === 0) {
+                reviewedPrMrListUl.innerHTML = '<li>暂无 AI 审查记录。</li>';
+            }
+            // Clear the details view as the item is gone
+            reviewDetailsContainer.innerHTML = '';
+        } else {
+            // fetchData should have shown an error status if result is null or not success
+            // If result exists but not success, it might have an error message from backend
+            if (result && result.error) {
+                 showStatus(`删除失败: ${result.error}`, true);
+            } else if (!result) { // fetchData returned null (e.g. network error, or API key issue before request)
+                 // showStatus('删除审查记录失败。请检查网络或API Key。', true); // fetchData already shows this
+            }
         }
     }
 

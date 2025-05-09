@@ -2,10 +2,14 @@ from flask import request, jsonify
 import json 
 import logging 
 from api.app_factory import app
+from flask import request, jsonify
+import json 
+import logging 
+from api.app_factory import app
 from api.core_config import (
     app_configs, github_repo_configs, gitlab_project_configs,
     REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY,
-    get_all_reviewed_prs_mrs_keys, get_review_results # 新增导入
+    get_all_reviewed_prs_mrs_keys, get_review_results, delete_review_results_for_pr_mr # 新增导入
 )
 import api.core_config as core_config_module  # 访问 redis_client 的推荐方式
 from api.utils import require_admin_key
@@ -246,3 +250,29 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
             response_data["display_identifier"] = identifier
 
         return jsonify(response_data), 200
+
+
+@app.route('/config/review_results/<string:vcs_type>/<path:identifier>/<string:pr_mr_id>', methods=['DELETE'])
+@require_admin_key
+def delete_specific_review_results_for_pr_mr(vcs_type, identifier, pr_mr_id):
+    """
+    删除特定 PR/MR 的所有 AI 审查结果。
+    """
+    # 允许的 vcs_type 包括详细审查和通用审查
+    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general']
+    if vcs_type not in allowed_vcs_types:
+        return jsonify({"error": f"无效的 VCS 类型。支持的类型: {', '.join(allowed_vcs_types)}。"}), 400
+
+    logger.info(f"请求删除审查结果: VCS={vcs_type}, ID={identifier}, PR/MR ID={pr_mr_id}")
+
+    try:
+        # delete_review_results_for_pr_mr 内部会处理 Redis 客户端不可用的情况并记录日志
+        # 它不返回特定的成功/失败状态，但如果 Redis 操作失败会记录错误。
+        # 我们假设如果函数执行没有抛出异常，操作就被认为是“已尝试”。
+        delete_review_results_for_pr_mr(vcs_type, identifier, pr_mr_id)
+        # core_config.delete_review_results_for_pr_mr 内部会打印日志，
+        # 表明是成功删除还是未找到键。对于前端来说，200 OK 意味着请求被处理了。
+        return jsonify({"message": f"{vcs_type.upper()} {identifier} #{pr_mr_id} 的审查结果删除请求已处理。"}), 200
+    except Exception as e:
+        logger.error(f"删除 {vcs_type} {identifier} #{pr_mr_id} 的审查结果时发生意外错误: {e}", exc_info=True)
+        return jsonify({"error": "删除审查结果时发生服务器内部错误。"}), 500
