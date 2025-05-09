@@ -10,6 +10,16 @@ openai_client = None
 thinking_model_names = ["qwen3:32b", "qwen3:20b"]  # 您可以根据需要扩展此列表
 
 
+def _prepare_llm_user_prompt(base_prompt: str, model_name: str, context_description: str) -> str:
+    """根据模型名称和上下文准备最终用户提示。如果模型是思考模型，则添加 '/no_think'。"""
+    if model_name in thinking_model_names:
+        logger.info(f"当前模型 {model_name} 是一个思考模型 ({context_description})。将在提示前添加 '/no_think'。")
+        return "/no_think " + base_prompt
+    else:
+        logger.debug(f"当前模型 {model_name} 不是一个已知的思考模型 ({context_description})。按原样使用提示。")
+        return base_prompt
+
+
 def initialize_openai_client():
     """根据 app_configs 初始化或重新初始化全局 OpenAI 客户端。"""
     global openai_client
@@ -248,12 +258,7 @@ def get_openai_code_review(structured_file_changes):
                 logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。将跳过此文件并继续处理其他文件。")
                 continue  # Skip this file and continue with the next ones
 
-            final_user_prompt = prompt
-            if current_model in thinking_model_names:
-                logger.info(f"当前模型 {current_model} 是一个思考模型 (细粒度审查)。将在提示前添加 '/no_think'。")
-                final_user_prompt = "/no_think " + prompt
-            else:
-                logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型 (细粒度审查)。按原样使用提示。")
+            final_user_prompt = _prepare_llm_user_prompt(prompt, current_model, "细粒度审查")
 
             response = client.chat.completions.create(
                 model=current_model,
@@ -379,12 +384,7 @@ def get_openai_code_review_coarse(file_data: dict):
     current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
     logger.info(f"正在发送文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查请求给 {current_model}...")
 
-    final_user_prompt_content = user_prompt_content
-    if current_model in thinking_model_names:
-        logger.info(f"当前模型 {current_model} 是一个思考模型。将在提示前添加 '/no_think'。")
-        final_user_prompt_content = "/no_think " + user_prompt_content
-    else:
-        logger.debug(f"当前模型 {current_model} 不是一个已知的思考模型。按原样使用提示。")
+    final_user_prompt_content = _prepare_llm_user_prompt(user_prompt_content, current_model, "粗粒度审查")
 
     try:
         response = client.chat.completions.create(
