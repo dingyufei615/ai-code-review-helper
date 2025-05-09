@@ -228,6 +228,11 @@ def github_webhook():
     else:
         logger.warning(f"警告: GitHub PR {repo_full_name}#{pull_number} 的 head_sha 为空。无法标记为已处理。")
 
+    # 添加最终总结评论
+    model_name = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    final_comment_text = f"本次AI代码审查已完成，审核模型:「{model_name}」 修改意见仅供参考，具体修改请根据实际场景进行调整。"
+    add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, final_comment_text)
+
     return "GitHub Webhook 处理成功", 200
 
 
@@ -412,6 +417,11 @@ def gitlab_webhook():
             f"警告: head_sha_payload 为空，使用来自 position_info 的 head_sha 进行标记处理: {position_info.get('head_sha')}")
         mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), position_info.get("head_sha"))
 
+    # 添加最终总结评论
+    model_name = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    final_comment_text = f"本次AI代码审查已完成，审核模型:「{model_name}」 修改意见仅供参考，具体修改请根据实际场景进行调整。"
+    add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, final_comment_text)
+
     return "GitLab Webhook 处理成功", 200
 
 
@@ -579,6 +589,11 @@ def github_webhook_general():
 
     if head_sha:
         mark_commit_as_processed('github_general', repo_full_name, str(pull_number), head_sha)
+
+    # 添加最终总结评论
+    model_name = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    final_comment_text = f"本次AI代码审查已完成，审核模型:「{model_name}」 修改意见仅供参考，具体修改请根据实际场景进行调整。"
+    add_github_pr_coarse_comment(owner, repo_name, pull_number, access_token, final_comment_text)
 
     return "GitHub General Webhook 处理成功", 200
 
@@ -773,5 +788,10 @@ def gitlab_webhook_general():
 
     if current_commit_sha_for_ops:
         mark_commit_as_processed('gitlab_general', project_id_str, str(mr_iid), current_commit_sha_for_ops)
+
+    # 添加最终总结评论
+    model_name = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    final_comment_text = f"本次AI代码审查已完成，审核模型:「{model_name}」 修改意见仅供参考，具体修改请根据实际场景进行调整。"
+    add_gitlab_mr_coarse_comment(project_id_str, mr_iid, access_token, final_comment_text)
 
     return "GitLab General Webhook 处理成功", 200
