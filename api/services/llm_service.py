@@ -308,43 +308,47 @@ def get_openai_code_review(structured_file_changes):
     return final_json_output
 
 
-def get_openai_code_review_coarse(file_data_list: list):
+def get_openai_code_review_coarse(file_data: dict):
     """
-    使用 OpenAI API 对代码变更进行粗粒度的审查。
-    接收一个文件数据列表，每个文件包含路径、diff、旧内容和新内容。
-    返回一个单一的文本字符串，作为整体的审查意见 (Markdown 格式)。
+    使用 OpenAI API 对单个文件的代码变更进行粗粒度的审查。
+    接收一个文件数据字典，包含路径、diff、旧内容和新内容。
+    返回一个针对该文件的 Markdown 格式审查意见文本字符串。
+    如果文件无问题，则返回空字符串或特定无问题指示。
     """
     client = get_openai_client()
     if not client:
-        logger.warning("OpenAI 客户端不可用 (未初始化或初始化失败)。跳过粗粒度审查。")
-        return "OpenAI client is not available. Skipping coarse review."
-    if not file_data_list:
-        logger.info("未提供文件数据以供粗粒度审查。")
-        return "No file data provided for coarse review."
+        logger.warning("OpenAI 客户端不可用 (未初始化或初始化失败)。跳过单个文件的粗粒度审查。")
+        return "OpenAI client is not available. Skipping coarse review for single file."
+    if not file_data:
+        logger.info("未提供文件数据以供单个文件的粗粒度审查。")
+        return "" # 返回空字符串表示无内容可审或无问题
 
     system_prompt = """
 # 角色
-你是一名经验丰富的代码审查专家。你的任务是基于提供的代码变更（包括文件路径、变更状态、diff/patch 以及可选的旧版和新版完整文件内容），进行一次粗粒度的代码审查。
+你是一名代码审查专家。你的任务是基于提供的单个代码文件变更（包括文件路径、变更状态、diff/patch 以及可选的旧版和新版完整文件内容），对此文件进行审查，并使用中文和用户交流。
 
 # 指令
-1.  **输出格式**: 你的审查结果必须是一个**单一的文本块**，使用 Markdown 格式化以便阅读。**绝对不要输出 JSON 或任何结构化数据。**
+1.  **输出格式**: 你的审查结果必须是一个**单一的 Markdown 文本块**，针对当前这一个文件。**绝对不要输出 JSON 或任何结构化数据。**
 2.  **审查重点**:
-    *   **正确性与健壮性**: 发现潜在的逻辑错误、边界条件问题、不正确的错误处理等。
-    *   **安全性**: 识别任何可能的安全漏洞，如注入风险、数据泄露等。
-    *   **性能**: 指出明显的性能瓶颈或低效代码。
-    *   **设计与架构**: 评论代码是否遵循良好的设计原则，模块化和可维护性如何。
-    *   **最佳实践**: 是否遵循了语言或框架的最佳实践和编码规范。
-3.  **审查范围**:
-    *   如果一个文件的旧内容或新内容未提供（例如因为文件过大或为二进制文件），请基于可用的 diff 信息进行审查，并可以注明这一点。
-    *   对每个有显著问题或值得一提的点的文件，请提及文件路径并给出你的评论。
-    *   如果所有文件看起来都很好，没有主要问题，你可以简单说明代码变更整体良好，或提出一些次要的观察点。
+    *   **只关注严重的代码问题**: 例如潜在的逻辑错误、安全漏洞、严重性能问题、导致程序崩溃的缺陷。
+    *   **忽略**: 代码风格、命名规范、注释缺失、不影响功能的细微优化等非严重问题。
+3.  **审查范围与内容 (针对当前单个文件)**:
+    *   **问题定位**: 如果发现严重问题，请明确指出问题所在（例如行号，如果适用）。
+    *   **简要分析**: 对每个严重问题，用一两句话简要描述问题。
+    *   **修改建议**: 针对每个严重问题，给出一两句核心的修改建议。
+    *   如果文件的旧内容或新内容未提供（例如因为文件过大或为二进制文件），请基于可用的 diff 信息进行审查，并可以注明这一点。
+    *   **无严重问题**: 如果当前审查的文件没有发现严重问题，请返回一个**空字符串**或明确指出无问题，例如：“此文件未发现严重问题。”。
 4.  **风格要求**:
-    *   保持审查意见简洁、中肯、具有可操作性。
-    *   可以先给出一个总体摘要（如果适用），然后列出针对特定文件的评论。
-    *   避免针对非常细微的格式问题或个人偏好进行评论，除非它们严重影响可读性或维护性。
+    *   **极其简洁**: 避免任何不必要的寒暄、解释或背景信息。直接输出你的审查结果。
+    *   **Markdown 格式**: 使用 Markdown 列表、代码块等元素清晰展示。例如，如果发现问题：
+        ```markdown
+        - **问题**: 在第 25 行，直接使用了用户输入构建 SQL 查询，可能导致 SQL 注入。
+        - **建议**: 使用参数化查询或 ORM 来处理数据库操作。
+        ```
+        如果未发现问题，返回空字符串或：“此文件未发现严重问题。”
 
 # 输入数据格式
-你将收到一个 JSON 字符串，它是一个包含多个文件变更对象的列表。每个文件变更对象结构如下：
+你将收到一个 JSON 字符串，它代表**一个文件**的变更对象，结构如下：
 {
   "file_path": "string, 文件的完整路径",
   "status": "string, 变更状态 ('added', 'modified', 'deleted', 'renamed')",
@@ -353,18 +357,18 @@ def get_openai_code_review_coarse(file_data_list: list):
   "new_content": "string or null, 变更后的文件完整内容 (如果是删除文件则为 null)"
 }
 
-请现在根据这些指令，对我接下来提供的文件变更列表（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的文本审查意见。
+请现在根据这些指令，对我接下来提供的单个文件变更（将以 JSON 字符串形式出现）进行审查，并返回 Markdown 格式的文本审查意见。
 """
 
     try:
         # 准备发送给 LLM 的用户提示内容
-        user_prompt_content = json.dumps(file_data_list, ensure_ascii=False, indent=2)
+        user_prompt_content = json.dumps(file_data, ensure_ascii=False, indent=2)
     except TypeError as te:
-        logger.error(f"序列化粗粒度审查的输入数据时出错: {te}")
-        return "Error serializing input data for coarse review."
+        logger.error(f"序列化文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查输入数据时出错: {te}")
+        return f"Error serializing input data for coarse review of file {file_data.get('file_path', 'N/A')}."
 
     current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
-    logger.info(f"正在发送包含 {len(file_data_list)} 个文件的粗粒度审查请求给 {current_model}...")
+    logger.info(f"正在发送文件 {file_data.get('file_path', 'N/A')} 的粗粒度审查请求给 {current_model}...")
 
     try:
         response = client.chat.completions.create(

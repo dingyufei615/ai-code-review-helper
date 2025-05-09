@@ -192,10 +192,11 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
     return structured_changes, position_info
 
 
-def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = False):
+def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = False, max_size_bytes: int = None):
     """
     通用辅助函数，用于从给定 URL 获取文件内容。
     GitHub raw URL 直接返回文本。GitHub Contents API 和 GitLab Files API 返回 JSON，其中内容为 base64 编码。
+    增加了 max_size_bytes 参数用于限制通过 API 获取的文件大小。
     """
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -213,6 +214,13 @@ def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = Fals
                     return None
         else: # GitHub Contents API or GitLab Files API
             data = response.json()
+            
+            # 文件大小检查 (适用于返回 JSON 并包含 size 字段的 API)
+            file_size = data.get('size')
+            if file_size is not None and max_size_bytes is not None and file_size > max_size_bytes:
+                logger.warning(f"文件 {url} 过大 ({file_size} 字节，限制 {max_size_bytes} 字节)。跳过获取内容。")
+                return f"[Content not fetched: File size ({file_size} bytes) exceeds limit {max_size_bytes} bytes]"
+
             if data.get("encoding") == "base64" and data.get("content"):
                 content_bytes = base64.b64decode(data["content"])
                 # Try to decode as UTF-8, fallback to ISO-8859-1 then skip if fails
@@ -310,7 +318,7 @@ def get_github_pr_data_for_coarse_review(owner: str, repo_name: str, pull_number
                 # We'll attempt to fetch and let _fetch_file_content_from_url handle large/binary via its internal JSON parsing if not raw
                 old_content_url = f"{current_github_api_url}/repos/{owner}/{repo_name}/contents/{path_for_old_content}?ref={base_sha}"
                 logger.info(f"获取旧内容: {path_for_old_content} (ref: {base_sha}) 从 {old_content_url}")
-                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers_content_api, is_github=False) # Not raw, expect JSON
+                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers_content_api, is_github=False, max_size_bytes=1024*1024) # Not raw, expect JSON, add size limit
 
             coarse_review_data.append(file_data_entry)
 
@@ -407,7 +415,7 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
                 encoded_new_path = requests.utils.quote(new_path, safe='')
                 new_content_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/repository/files/{encoded_new_path}?ref={head_sha}"
                 logger.info(f"获取新内容 (GitLab): {new_path} (ref: {head_sha})")
-                file_data_entry["new_content"] = _fetch_file_content_from_url(new_content_url, headers)
+                file_data_entry["new_content"] = _fetch_file_content_from_url(new_content_url, headers, max_size_bytes=1024*1024)
 
 
             # Get old content (if not new file)
@@ -416,7 +424,7 @@ def get_gitlab_mr_data_for_coarse_review(project_id: str, mr_iid: int, access_to
                 encoded_old_path = requests.utils.quote(path_for_old_content, safe='')
                 old_content_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/repository/files/{encoded_old_path}?ref={base_sha}"
                 logger.info(f"获取旧内容 (GitLab): {path_for_old_content} (ref: {base_sha})")
-                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers)
+                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers, max_size_bytes=1024*1024)
             
             coarse_review_data.append(file_data_entry)
 
