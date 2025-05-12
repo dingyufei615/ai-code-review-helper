@@ -1,31 +1,26 @@
 # AI Code Review Helper
 
-AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub 和 GitLab Webhook，利用大型语言模型（LLM）分析代码变更，并将审查意见反馈到 Pull Request 或 Merge Request，同时支持企业微信通知。
+一个基于 LLM 的自动化代码审查助手。通过 GitHub/GitLab Webhook 监听 PR/MR 变更，调用 AI 分析代码，并将审查意见自动评论到 PR/MR，同时支持多种通知渠道。
 
 ## 主要功能
 
-- **Webhook 集成**: 支持 GitHub 和 GitLab，自动监听代码变更。
-- **智能代码分析**:
-    - **详细行级审查**: 对每次提交的完整 diff 进行分析，输出结构化的 JSON 审查意见，可定位到具体代码行。
-    - **通用审查**: 对每个变更的文件进行单独分析，输出 Markdown 格式的审查意见。
-- **自动化评论**: AI 审查意见自动发布到 PR/MR。
-- **异步处理**: Webhook 请求被快速接受，实际的代码分析和评论在后台异步执行，提高系统响应速度和吞吐量。
-- **配置管理**:
-    - 环境变量基础配置。
-    - Web 管理面板 (`/admin`)：动态管理 GitHub/GitLab 仓库/项目配置 (Webhook Secret, Access Token, GitLab 实例 URL)、LLM 配置 (模型、API Key、Base URL)、通知配置 (企业微信 Webhook URL)，并可查阅 AI 审查记录。管理面板的访问和操作受 Admin API Key 保护。
-    - 安全 API 接口：编程方式管理配置。
-    - Redis 持久化：存储仓库/项目配置、已处理的 Commit SHA 以及 AI 审查结果。全局应用配置（如 LLM 设置、通知设置）主要通过环境变量设定，管理面板的修改在内存中生效并优先于环境变量，服务重启后会从环境变量重新加载。
-- **通知服务**: Code Review 摘要发送到企业微信。
-- **防止重复处理**: Redis 记录已处理 Commit SHA，避免对同一 Commit 的重复审查。
-- **友好提示**: AI 未发现问题时自动评论。
-- **审查结果存储与查阅**: Redis 存储，管理面板查阅历史。
-- **自动清理**: PR/MR 关闭或合并时，清理 Redis 相关记录。
-- **结果有效期**: Redis 中审查结果默认7天后自动删除。
-- **灵活部署**: 独立 Web 服务或 Docker 容器。
-
-## 系统架构
-
-应用通过以下模块协同工作：VCS Webhooks -> Webhook 快速响应与任务分发 -> 异步任务执行 (VCS 服务交互、LLM 服务调用) -> 结果处理 (评论、通知、存储) -> 配置管理 -> Web 应用 (Flask)。
+- **多平台支持**: 集成 GitHub 和 GitLab Webhook，监听 Pull Request / Merge Request 事件。
+- **智能审查模式**:
+    - **详细审查**: 对代码 diff 进行行级分析，输出结构化 JSON 评论。
+    - **通用审查**: 对每个变更文件进行整体分析，输出 Markdown 评论。
+- **自动化流程**:
+    - 自动将 AI 审查意见发布到 PR/MR。
+    - 异步处理审查任务，快速响应 Webhook。
+    - 通过 Redis 防止对同一 Commit 的重复审查。
+    - AI 未发现问题时，自动添加友好提示。
+- **灵活配置**:
+    - 通过环境变量设置基础配置。
+    - 提供 Web 管理面板 (`/admin`) 和 API，用于管理仓库/项目密钥、LLM 参数、通知设置。
+    - 使用 Redis 持久化存储配置和审查结果。
+- **通知与记录**:
+    - 将审查摘要发送到企业微信和自定义 Webhook。
+    - 在 Redis 中存储审查结果，支持通过管理面板查阅，并自动清理过期/已关闭 PR/MR 的记录。
+- **部署**: 支持 Docker 部署或直接运行 Python 应用。
 
 ## 🚀 快速开始
 
@@ -63,78 +58,58 @@ docker run -d -p 8088:8088 \
 -   `REDIS_SSL_ENABLED`: (默认: `true`) 是否为 Redis 连接启用 SSL。
 -   (更多变量如 `SERVER_HOST`, `SERVER_PORT`, `GITHUB_API_URL`, `GITLAB_INSTANCE_URL` 等请参考启动日志或源码。)
 
-### 2. 管理面板 (`/admin`)
-浏览器访问 `http://<your_server_host>:<your_server_port>/admin`。首次访问或 Cookie 失效时，会提示输入 `Admin API Key` (该 Key 本身通过环境变量 `ADMIN_API_KEY` 设置，面板仅用于验证和临时保存于 Cookie)。
-功能包括：
-- **GitHub/GitLab 配置**: 添加、查看和删除各仓库/项目的 Webhook Secret、Access Token 以及 GitLab 项目特定的实例 URL。
-- **LLM 配置**: 查看和修改 OpenAI API Base URL、API Key 和模型名称。这些修改在当前运行时优先于环境变量，服务重启后会恢复为环境变量的设置。
-- **通知配置**: 查看和修改企业微信机器人的 Webhook URL。
-- **AI 审查记录查阅**: 查看已完成的 AI 审查结果列表，并可点击查看特定 PR/MR 在不同 Commit 下的详细审查意见。
+### 2. 管理面板与 API
+- **管理面板 (`/admin`)**: 提供 Web 界面，用于：
+    - 配置 GitHub/GitLab 仓库/项目的 Webhook Secret 和 Access Token。
+    - 管理 LLM 参数（API Key, Base URL, Model）。
+    - 设置通知 Webhook URL（企业微信、自定义）。
+    - 查看 AI 审查历史记录。
+    - 访问需要通过环境变量 `ADMIN_API_KEY` 设置的密钥进行验证。
+- **配置 API**: 提供 RESTful API (`/config/*`) 用于以编程方式管理上述配置，同样需要 `X-Admin-API-Key` 请求头进行认证。
 
 **配置持久化**:
-- **Redis**: **必需**。用于存储仓库/项目配置 (如 Webhook Secret, Token)、已处理 Commit SHA 的集合、AI 审查结果 (包含详细评论内容，默认7天过期)。如果 Redis 未配置或无法连接，服务将无法启动。
-- **内存与环境变量**: 全局应用配置 (如 OpenAI API Key/URL/Model, 企业微信 Webhook URL, Redis 连接参数等) 主要通过环境变量在服务启动时加载。管理面板对这些全局配置的修改仅在当前运行时内存中生效，并优先于环境变量；服务重启后将从环境变量重新加载。因此，对于需要持久化的全局配置，建议直接修改环境变量并重启服务。
-
-### 3. 配置 API
-通过 API 端点管理配置，需 `X-Admin-API-Key` 请求头。
--   `/config/global_settings` (GET, POST)
--   `/config/github/repo` (POST), `/config/github/repos` (GET), `/config/github/repo/<owner>/<repo>` (DELETE)
--   `/config/gitlab/project` (POST), `/config/gitlab/projects` (GET), `/config/gitlab/project/<project_id>` (DELETE)
--   `/config/review_results/list` (GET), `/config/review_results/<vcs_type>/<identifier>/<pr_mr_id>` (GET, 可选 `?commit_sha=<sha>`)
+- **Redis (必需)**: 存储仓库/项目配置、已处理 Commit SHA、AI 审查结果（默认7天过期）。服务依赖 Redis 运行。
+- **环境变量**: 主要用于加载全局配置（如 LLM Key/URL, Redis 连接信息, Admin API Key）。管理面板对全局配置的修改仅在运行时生效，重启后会恢复为环境变量的值。建议通过环境变量管理需要持久化的全局配置。
 
 ## 使用方法
 
-1.  **启动并配置服务**: 确保服务运行，并通过环境变量或管理面板/API 完成必要配置 (Admin API Key, LLM Keys, 仓库/项目的 Webhook Secret 和 Access Token)。
-    -   **GitHub Access Token**: 生成具有 `repo` (或更细粒度如 `Contents: Read-only` 和 `Pull requests: Read & write`) 权限的 PAT。
+1.  **启动服务**: 使用 Docker 或直接运行 Python 应用，确保已配置必要的环境变量（`ADMIN_API_KEY`, `OPENAI_API_KEY`, `REDIS_HOST` 等）。
+2.  **配置仓库/项目**: 通过管理面板 (`/admin`) 或 API 添加目标 GitHub 仓库或 GitLab 项目的配置，包括 Webhook Secret 和具有读写 PR/MR 评论权限的 Access Token。
+3.  **设置 Webhook**: 在 GitHub/GitLab 的仓库/项目设置中添加 Webhook：
+    - **Payload URL**: 指向你的服务地址和相应的 Webhook 端点（见下文）。
+    - **Content type**: `application/json`。
+    - **Secret**: 填入上一步在管理面板中配置的 Webhook Secret。
+    - **Events**: GitHub 选择 "Pull requests"，GitLab 勾选 "Merge request events"。
+4.  **触发审查**: 创建或更新 PR/MR，服务将自动进行代码审查。
 
-2.  **在 GitHub/GitLab 中设置 Webhook**:
-    -   **GitHub**: 仓库 `Settings` -> `Webhooks` -> `Add webhook`。
-        -   **Payload URL**: `http://<your_server_host>:<your_server_port>/github_webhook` (详细审查) 或 `/github_webhook_general` (通用审查)。
-        -   **Content type**: `application/json`。
-        -   **Secret**: 在管理面板中配置的 `Webhook Secret`。
-        -   **Events**: 选择 "Pull requests"。
-    -   **GitLab**: 项目 `Settings` -> `Webhooks`。
-        -   **URL**: `http://<your_server_host>:<your_server_port>/gitlab_webhook` (详细审查) 或 `/gitlab_webhook_general` (通用审查)。
-        -   **Secret token**: 在管理面板中配置的 `Webhook Secret`。
-        -   **Trigger**: 勾选 "Merge request events"。
-
-3.  **触发 Code Review**: 在配置的仓库/项目中创建或更新 PR/MR。应用将获取变更、调用 LLM 分析、发布评论，并发送通知。 
-
-### 注意事项
-为什么要设计【详细审查】和【通用审查】两种 code review ?
-因为有的模型在指令遵循和通用能力上效果不足（例如一些自部署的Ollama小模型等），没办法按照 prompt 做到代码行的行号定位和格式返回，
-所以使用通用审查接口更为合适，对于变更代码和所处的整个代码文件进行审查给出结果。
-如果尝试在使用`/github_webhook`或`/gitlab_webhook`接口的审核效果不足或总是无审核结果，可以查看运行日志看到llm的审查结果可能不符合规范，
-此时需要换到`/github_webhook_general` 或 `/gitlab_webhook_general`，再或者更换能力更强的模型。
+### 审查模式选择
+- **详细审查** (`/github_webhook`, `/gitlab_webhook`): 尝试进行行级定位和结构化输出。适用于指令遵循能力较强的模型（如 GPT-4）。如果效果不佳或无结果，请检查日志中 LLM 的输出是否符合预期 JSON 格式。
+- **通用审查** (`/github_webhook_general`, `/gitlab_webhook_general`): 对整个文件变更进行分析，输出 Markdown。适用于通用能力模型或当详细审查效果不理想时。
 
 ### 开发模式
 ```bash
-# 1. 获取代码
+# 1. 克隆仓库
 git clone https://github.com/dingyufei615/ai-code-review-helper.git
 cd ai-code-review-helper
 
-# 2. 准备环境
+# 2. 创建并激活虚拟环境
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 3. 安装依赖
 pip install -r requirements.txt
 
-# 3. 启动服务 (需先配置环境变量)
+# 4. 配置环境变量 (参考 .env.example 或 配置 部分)
+
+# 5. 启动服务
 python -m api.ai_code_review_helper
 ```
 
-## API 端点
--   `/admin`: 管理面板。
--   `/github_webhook`: GitHub 详细审查 Webhook。
--   `/gitlab_webhook`: GitLab 详细审查 Webhook。
--   `/github_webhook_general`: GitHub 通用审查 Webhook。
--   `/gitlab_webhook_general`: GitLab 通用审查 Webhook。
--   `/config/*`: 配置管理 API (详见上文)。
-
 ## 注意事项
--   **安全**: 妥善保管 `ADMIN_API_KEY`、Access Token 和 Webhook Secret。
--   **LLM 成本**: 关注商业 LLM 服务费用。
--   **日志**: 应用在控制台输出详细日志。
--   **配置持久化**: 服务运行**依赖 Redis** 进行仓库/项目配置和审查结果的存储。全局配置建议通过环境变量管理。
+- **安全**: 务必使用强 `ADMIN_API_KEY`，并妥善保管所有 Token 和 Secret。
+- **成本**: 注意所使用 LLM 服务的 API 调用成本。
+- **日志**: 服务会在控制台输出详细运行日志，便于排查问题。
+- **Redis 依赖**: 服务强依赖 Redis 进行配置和结果存储。
 
 ## 贡献
 本代码 90% 由 [Aider](https://github.com/Aider-AI/aider) + Gemini 协同完成。
