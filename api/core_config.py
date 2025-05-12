@@ -27,6 +27,7 @@ app_configs = {
     "REDIS_PASSWORD": os.environ.get("REDIS_PASSWORD", None),
     "REDIS_SSL_ENABLED": os.environ.get("REDIS_SSL_ENABLED", "true").lower() == "true",
     "REDIS_DB": int(os.environ.get("REDIS_DB", "0")),
+    "CUSTOM_WEBHOOK_URL": os.environ.get("CUSTOM_WEBHOOK_URL", ""), # 新增：自定义通知 Webhook URL
 }
 # --- ---
 

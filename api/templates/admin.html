@@ -106,6 +106,10 @@
                     <input type="text" id="wecomBotWebhookUrl" name="WECOM_BOT_WEBHOOK_URL" placeholder="请输入企业微信机器人的 Webhook URL">
                     <p style="font-size:0.85em; color: #555; margin-top: -10px; margin-bottom: 15px;">如果为空，则禁用企业微信通知。</p>
 
+                    <label for="customWebhookUrl">自定义 Webhook URL:</label>
+                    <input type="text" id="customWebhookUrl" name="CUSTOM_WEBHOOK_URL" placeholder="请输入自定义通知的 Webhook URL">
+                    <p style="font-size:0.85em; color: #555; margin-top: -10px; margin-bottom: 15px;">如果为空，则禁用自定义 Webhook 通知。将发送包含 'content' 字段的 JSON POST 请求。</p>
+
                     <button type="submit">保存通知配置</button>
                 </form>
             </div>
@@ -442,11 +446,18 @@
         const data = await fetchData('/config/global_settings');
         if (data) {
             document.getElementById('openaiApiBaseUrl').value = data.OPENAI_API_BASE_URL || '';
-            document.getElementById('openaiApiKey').value = data.OPENAI_API_KEY || ''; // Consider not re-populating password fields for security
+            // document.getElementById('openaiApiKey').value = data.OPENAI_API_KEY || ''; // 不重新填充密码字段
             document.getElementById('openaiModel').value = data.OPENAI_MODEL || '';
             document.getElementById('wecomBotWebhookUrl').value = data.WECOM_BOT_WEBHOOK_URL || '';
+            document.getElementById('customWebhookUrl').value = data.CUSTOM_WEBHOOK_URL || ''; // 新增
             showStatus('全局配置已加载。', false);
         } else {
+            // 如果加载失败，也清空字段
+            document.getElementById('openaiApiBaseUrl').value = '';
+            document.getElementById('openaiApiKey').value = '';
+            document.getElementById('openaiModel').value = '';
+            document.getElementById('wecomBotWebhookUrl').value = '';
+            document.getElementById('customWebhookUrl').value = ''; // 新增
             showStatus('加载全局配置失败。', true);
         }
     }
@@ -486,7 +497,9 @@
         e.preventDefault();
         const settings = {
             WECOM_BOT_WEBHOOK_URL: document.getElementById('wecomBotWebhookUrl').value,
+            CUSTOM_WEBHOOK_URL: document.getElementById('customWebhookUrl').value, // 新增
         };
+        // 后端现在会处理空字符串以清除设置
         const result = await fetchData('/config/global_settings', 'POST', settings);
         if (result && result.message) {
             showStatus(result.message);
