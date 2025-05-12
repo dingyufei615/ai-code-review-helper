@@ -80,6 +80,11 @@ if __name__ == '__main__':
             app_configs.get("WECOM_BOT_WEBHOOK_URL")) > 6 else ''
         logger.info(f"企业微信机器人通知已启用，URL: {url_parts[0]}?key=...{key_preview}")
 
+    if not app_configs.get("CUSTOM_WEBHOOK_URL"):
+        logger.info("提示: CUSTOM_WEBHOOK_URL 未设置。自定义 Webhook 通知将被禁用。")
+    else:
+        logger.info(f"自定义 Webhook 通知已启用，URL: {app_configs.get('CUSTOM_WEBHOOK_URL')}")
+
     # Check openai_client status after initial attempt
     if not llm_service_module.openai_client:  # Check via module attribute
         logger.warning(
@@ -98,7 +103,7 @@ if __name__ == '__main__':
         f"  查看: curl -X GET -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" http://localhost:{SERVER_PORT}/config/global_settings")
     logger.info(f"  更新: curl -X POST -H \"Content-Type: application/json\" -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" \\")
     logger.info(
-        f"    -d '{{\"OPENAI_MODEL\": \"gpt-3.5-turbo\", \"GITHUB_API_URL\": \"https://api.github.com\"}}' \\")  # Example
+        f"    -d '{{\"OPENAI_MODEL\": \"gpt-3.5-turbo\", \"WECOM_BOT_WEBHOOK_URL\": \"YOUR_WECOM_URL\", \"CUSTOM_WEBHOOK_URL\": \"YOUR_CUSTOM_URL\"}}' \\")  # Example
     logger.info(f"    http://localhost:{SERVER_PORT}/config/global_settings")
 
     logger.info("GitHub 仓库配置示例 (通过管理面板或 API):")

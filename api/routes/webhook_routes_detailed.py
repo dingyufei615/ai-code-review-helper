@@ -14,7 +14,7 @@ from api.services.vcs_service import (
     add_gitlab_mr_general_comment  # Used for final summary
 )
 from api.services.llm_service import get_openai_code_review
-from api.services.notification_service import send_to_wecom_bot
+from api.services.notification_service import send_notifications
 from api.services.common_service import get_final_summary_comment_text
 from .webhook_helpers import _save_review_results_and_log
 
@@ -129,7 +129,8 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
 
 {review_summary_line}
 """
-        send_to_wecom_bot(summary_content)
+        # send_to_wecom_bot(summary_content) # 旧调用
+        send_notifications(summary_content) # 新调用
 
     if head_sha:
         mark_commit_as_processed('github', repo_full_name, str(pull_number), head_sha)
@@ -329,7 +330,8 @@ def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_
 
 {review_summary_line}
 """
-        send_to_wecom_bot(summary_content)
+        # send_to_wecom_bot(summary_content) # 旧调用
+        send_notifications(summary_content) # 新调用
 
     if head_sha_payload:
         mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), head_sha_payload)
