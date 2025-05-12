@@ -27,46 +27,26 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 
 应用通过以下模块协同工作：VCS Webhooks -> Webhook 快速响应与任务分发 -> 异步任务执行 (VCS 服务交互、LLM 服务调用) -> 结果处理 (评论、通知、存储) -> 配置管理 -> Web 应用 (Flask)。
 
-## 安装与部署
+## 🚀 快速开始
 
-### 前提条件
-- Python 3.8+
+### 🐳 快速启动部署
+```bash
+# 使用官方镜像
+docker run -d -p 8088:8088 \
+  -e ADMIN_API_KEY="your-key" \
+  -e OPENAI_API_BASE_URL="https://api.openai.com/v1" \
+  -e OPENAI_API_KEY="your-key" \
+  -e OPENAI_MODEL="gpt-4o" \
+  -e REDIS_HOST="your-redis-host" \
+  -e REDIS_PASSWORD="your-redis-pwd"
+  --name ai-code-review-helper \
+  dingyufei/ai-code-review-helper:latest
+```
 
-### 本地启动
-1.  **克隆仓库**:
-    ```bash
-    git clone https://github.com/dingyufei615/ai-code-review-helper.git
-    cd ai-code-review-helper
-    ```
-2.  **安装依赖**: (建议使用虚拟环境)
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # macOS/Linux 或 venv\Scripts\activate for Windows
-    pip install -r requirements.txt
-    ```
-3.  **配置环境变量**: 核心配置通过环境变量设置 (详见下文)。至少需配置 `ADMIN_API_KEY` 和 OpenAI 相关变量 (如 `OPENAI_API_KEY`)。
-4.  **启动服务**:
-    ```bash
-    python -m api.ai_code_review_helper
-    ```
-    服务默认启动于 `0.0.0.0:8088` (可通过 `SERVER_HOST` 和 `SERVER_PORT` 修改)。
-
-### Docker 部署
-1.  **拉取/构建镜像**:
-    ```bash
-    docker pull dingyufei/ai-code-review-helper:latest
-    # 或 docker build -t ai-code-review-helper .
-    ```
-2.  **运行容器**:
-    ```bash
-    docker run -d -p 8088:8088 \
-      -e ADMIN_API_KEY="your_strong_admin_api_key" \
-      -e OPENAI_API_KEY="your_openai_api_key" \
-      # ... 其他必要环境变量 (见下文) ...
-      --name ai-review-app \
-      dingyufei/ai-code-review-helper:latest
-    ```
-    管理面板: `http://localhost:8088/admin`。
+> 📌 必需环境变量：
+> - `ADMIN_API_KEY` - 管理后台密码
+> - `OPENAI_API_KEY` - AI服务密钥  
+> - `REDIS_HOST` - Redis地址
 
 ## 配置
 
@@ -74,7 +54,7 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
 -   `ADMIN_API_KEY`: **必需**。保护管理接口的密钥。
 -   `OPENAI_API_KEY`: **必需**。OpenAI API 密钥。
 -   `OPENAI_MODEL`: (默认: `gpt-4o`) 使用的 OpenAI 模型。
--   `OPENAI_API_BASE_URL`: (可选) OpenAI API 基础 URL。
+-   `OPENAI_API_BASE_URL`: (可选) OpenAI API 基础 URL，格式为：http(s)://xxxx/v1 默认值：https://api.openai.com/v1
 -   `WECOM_BOT_WEBHOOK_URL`: (可选) 企业微信机器人 Webhook URL。
 -   `REDIS_HOST`: **必需**。Redis 服务器地址。如果未配置或无法连接，服务将无法启动。
 -   `REDIS_PORT`: (默认: `6379`) Redis 服务器端口。
@@ -118,7 +98,29 @@ AI Code Review Helper 是一款自动化代码审查工具，通过集成 GitHub
         -   **Secret token**: 在管理面板中配置的 `Webhook Secret`。
         -   **Trigger**: 勾选 "Merge request events"。
 
-3.  **触发 Code Review**: 在配置的仓库/项目中创建或更新 PR/MR。应用将获取变更、调用 LLM 分析、发布评论，并发送通知。
+3.  **触发 Code Review**: 在配置的仓库/项目中创建或更新 PR/MR。应用将获取变更、调用 LLM 分析、发布评论，并发送通知。 
+
+### 注意事项
+为什么要设计【详细审查】和【通用审查】两种 code review ?
+因为有的模型在指令遵循和通用能力上效果不足（例如一些自部署的Ollama小模型等），没办法按照 prompt 做到代码行的行号定位和格式返回，
+所以使用通用审查接口更为合适，对于变更代码和所处的整个代码文件进行审查给出结果。
+如果尝试在使用`/github_webhook`或`/gitlab_webhook`接口的审核效果不足或总是无审核结果，可以查看运行日志看到llm的审查结果可能不符合规范，
+此时需要换到`/github_webhook_general` 或 `/gitlab_webhook_general`，再或者更换能力更强的模型。
+
+### 开发模式
+```bash
+# 1. 获取代码
+git clone https://github.com/dingyufei615/ai-code-review-helper.git
+cd ai-code-review-helper
+
+# 2. 准备环境
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. 启动服务 (需先配置环境变量)
+python -m api.ai_code_review_helper
+```
 
 ## API 端点
 -   `/admin`: 管理面板。
