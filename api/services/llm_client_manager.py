@@ -7,20 +7,6 @@ logger = logging.getLogger(__name__)
 
 openai_client = None
 
-# 定义思考模型列表
-thinking_model_names = ["qwen3:32b", "qwen3:30b","qwen3:235b"]  # 您可以根据需要扩展此列表
-
-
-def _prepare_llm_user_prompt(base_prompt: str, model_name: str, context_description: str) -> str:
-    """根据模型名称和上下文准备最终用户提示。如果模型是思考模型，则添加 '/no_think'。"""
-    if model_name in thinking_model_names:
-        logger.info(f"当前模型 {model_name} 是一个思考模型 ({context_description})。将在提示前添加 '/no_think'。")
-        return "/no_think " + base_prompt
-    else:
-        logger.debug(f"当前模型 {model_name} 不是一个已知的思考模型 ({context_description})。按原样使用提示。")
-        return base_prompt
-
-
 def initialize_openai_client():
     """根据 app_configs 初始化或重新初始化全局 OpenAI 客户端。"""
     global openai_client
@@ -86,13 +72,12 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
     :param response_format_type: 可选，响应格式类型 (例如 "json_object")。
     :return: LLM 的响应内容。
     """
-    final_user_prompt = _prepare_llm_user_prompt(user_prompt, model_name, context_description)
 
     completion_params = {
         "model": model_name,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": final_user_prompt}
+            {"role": "user", "content": user_prompt}
         ]
     }
     if response_format_type:
