@@ -1,7 +1,9 @@
 # AI Code Review Helper
 
 一个基于 LLM 的自动化代码审查助手。通过 GitHub/GitLab Webhook 监听 PR/MR 变更，调用 AI 分析代码，并将审查意见自动评论到 PR/MR，同时支持多种通知渠道。
-<iframe src="//player.bilibili.com/player.html?isOutside=true&aid=114498425984165&bvid=BV1TF7ozaEPv&cid=29934226421&p=1" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+
+[点击观看B站演示视频](https://www.bilibili.com/video/BV1TF7ozaEPv)
+> 由于 GitHub 的限制，无法直接嵌入视频播放器。
 
 ## 主要功能
 
