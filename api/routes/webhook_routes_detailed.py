@@ -13,7 +13,9 @@ from api.services.vcs_service import (
     add_github_pr_general_comment, # Used for final summary
     add_gitlab_mr_general_comment  # Used for final summary
 )
-from api.services.llm_service import get_openai_code_review
+# 注意：get_openai_code_review 仍被 GitLab 逻辑使用，所以保留
+# 新增导入 get_openai_detailed_review_for_file 用于 GitHub 的逐文件审查
+from api.services.llm_service import get_openai_code_review, get_openai_detailed_review_for_file, get_openai_client
 from api.services.notification_service import send_notifications
 from api.services.common_service import get_final_summary_comment_text
 from .webhook_helpers import _save_review_results_and_log
@@ -49,7 +51,7 @@ def _get_wecom_summary_line(num_reviews, vcs_type):
 
 
 def _process_github_detailed_payload(access_token, owner, repo_name, pull_number, head_sha, repo_full_name, pr_title, pr_html_url, repo_web_url, pr_source_branch, pr_target_branch):
-    """实际处理 GitHub 详细审查的核心逻辑。"""
+    """实际处理 GitHub 详细审查的核心逻辑 (逐文件审查和评论)。"""
     logger.info("GitHub (详细审查): 正在获取并解析 PR 变更...")
     structured_changes = get_github_pr_changes(owner, repo_name, pull_number, access_token)
 
@@ -58,7 +60,6 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
         return
     if not structured_changes:
         logger.info("GitHub (详细审查): 解析后未检测到变更。无需审查。")
-        # 即使没有变更，也可能需要标记为已处理并保存空结果
         _save_review_results_and_log(
             vcs_type='github', identifier=repo_full_name, pr_mr_id=str(pull_number),
             commit_sha=head_sha, review_json_string=json.dumps([])
@@ -66,48 +67,66 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
         mark_commit_as_processed('github', repo_full_name, str(pull_number), head_sha)
         return
 
-    logger.info(f'GitHub (详细审查): 正在发送变更给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
-    review_result_json = get_openai_code_review(structured_changes)
+    all_reviews_for_redis = []
+    total_comments_posted_successfully = 0
+    
+    # 获取 OpenAI 客户端和模型配置一次
+    client = get_openai_client()
+    if not client:
+        logger.error("GitHub (详细审查): OpenAI 客户端不可用。中止审查。")
+        # 可以考虑发送一个错误通知或评论
+        return
+    current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
 
-    logger.info("--- GitHub (详细审查): AI 代码审查结果 (JSON) ---")
-    logger.info(f"{review_result_json}")
-    logger.info("--- GitHub (详细审查) 审查 JSON 结束 ---")
+    logger.info(f'GitHub (详细审查): 将对 {len(structured_changes)} 个文件逐一发送给 {current_model} 进行审查...')
+
+    for file_path, file_data in structured_changes.items():
+        logger.info(f"GitHub (详细审查): 正在处理文件: {file_path}")
+        reviews_for_file_list = get_openai_detailed_review_for_file(file_path, file_data, client, current_model)
+
+        if reviews_for_file_list: # reviews_for_file_list 是一个 Python 列表
+            all_reviews_for_redis.extend(reviews_for_file_list)
+            logger.info(f"GitHub (详细审查): 文件 {file_path} 发现 {len(reviews_for_file_list)} 个问题。正在尝试添加评论...")
+            
+            file_comments_added, file_comments_failed = 0, 0
+            for review_item in reviews_for_file_list:
+                # 确保 review_item 中包含 old_path (如果适用)
+                if "old_path" not in review_item and file_data.get("old_path"):
+                    review_item["old_path"] = file_data["old_path"]
+                
+                success = add_github_pr_comment(owner, repo_name, pull_number, access_token, review_item, head_sha)
+                if success:
+                    file_comments_added += 1
+                    total_comments_posted_successfully +=1
+                else:
+                    file_comments_failed += 1
+            logger.info(f"GitHub (详细审查): 文件 {file_path} 评论添加完成: {file_comments_added} 成功, {file_comments_failed} 失败。")
+        else:
+            logger.info(f"GitHub (详细审查): 文件 {file_path} 未发现问题或审查时出错。")
+
+    # 所有文件处理完毕后
+    logger.info("--- GitHub (详细审查): 所有文件处理完毕 ---")
+    logger.info(f"总共收集到 {len(all_reviews_for_redis)} 条审查意见用于存储。")
+
+    # 保存所有收集到的审查结果到 Redis
+    final_review_json_for_redis = "[]"
+    if all_reviews_for_redis:
+        try:
+            final_review_json_for_redis = json.dumps(all_reviews_for_redis, ensure_ascii=False, indent=2)
+        except TypeError as e:
+            logger.error(f"GitHub (详细审查): 序列化最终审查列表到 JSON 时出错: {e}")
+            # 保留 final_review_json_for_redis 为 "[]"
 
     _save_review_results_and_log(
         vcs_type='github',
         identifier=repo_full_name,
         pr_mr_id=str(pull_number),
         commit_sha=head_sha,
-        review_json_string=review_result_json
+        review_json_string=final_review_json_for_redis
     )
 
-    reviews = []
-    try:
-        parsed_data = json.loads(review_result_json)
-        if isinstance(parsed_data, list): reviews = parsed_data
-        logger.info(f"GitHub (详细审查): 从 JSON 成功解析 {len(reviews)} 个审查项。")
-    except json.JSONDecodeError as e:
-        logger.error(f"GitHub (详细审查): 解析审查结果 JSON 时出错: {e}。原始数据: {review_result_json[:500]}")
-
-    if reviews:
-        logger.info(f"GitHub (详细审查): 尝试向 PR 添加 {len(reviews)} 条审查评论...")
-        comments_added, comments_failed = 0, 0
-        for review in reviews:
-            if isinstance(review, dict) and "file" in review:
-                file_path = review["file"]
-                if file_path in structured_changes and "old_path" in structured_changes[file_path]:
-                    review["old_path"] = structured_changes[file_path]["old_path"]
-            if isinstance(review, dict):
-                success = add_github_pr_comment(owner, repo_name, pull_number, access_token, review, head_sha)
-                if success:
-                    comments_added += 1
-                else:
-                    comments_failed += 1
-            else:
-                logger.warning(f"GitHub (详细审查): 跳过无效的审查项: {review}");
-                comments_failed += 1
-        logger.info(f"GitHub (详细审查): 添加评论完成: {comments_added} 成功, {comments_failed} 失败。")
-    else:
+    # 如果没有任何评论被成功发布 (或 all_reviews_for_redis 为空)
+    if not all_reviews_for_redis: # 或者 total_comments_posted_successfully == 0
         _post_no_issues_comment(
             vcs_type='github',
             comment_function=add_github_pr_comment,
@@ -118,9 +137,10 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
             head_sha=head_sha
         )
 
-    if app_configs.get("WECOM_BOT_WEBHOOK_URL"):
-        logger.info("GitHub (详细审查): 正在发送摘要通知到企业微信机器人...")
-        review_summary_line = _get_wecom_summary_line(len(reviews), 'github')
+    # 发送企业微信通知
+    if app_configs.get("WECOM_BOT_WEBHOOK_URL") or app_configs.get("CUSTOM_WEBHOOK_URL"):
+        logger.info("GitHub (详细审查): 正在发送摘要通知...")
+        review_summary_line = _get_wecom_summary_line(len(all_reviews_for_redis), 'github')
         summary_content = f"""**AI代码审查完成 (GitHub)**
 
 > 仓库: [{repo_full_name}]({repo_web_url})
@@ -129,7 +149,7 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
 
 {review_summary_line}
 """
-        # send_to_wecom_bot(summary_content) # 旧调用
+        # send_to_wecom_bot(summary_content) # 旧调用 - 已被 send_notifications 替代
         send_notifications(summary_content) # 新调用
 
     if head_sha:
