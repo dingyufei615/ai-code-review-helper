@@ -106,6 +106,9 @@ pip install -r requirements.txt
 
 # 5. 启动服务
 python -m api.ai_code_review_helper
+
+# 6. 运行测试 (可选)
+python -m unittest discover tests
 ```
 
 ## 注意事项
