@@ -252,7 +252,6 @@ def github_webhook():
     return jsonify({"message": "GitHub Detailed Webhook processing task accepted."}), 202
 
 
-@app.route('/gitlab_webhook', methods=['POST'])
 def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_sha_payload, project_data, mr_attrs, project_web_url, mr_title, mr_url, project_name_from_payload):
     """实际处理 GitLab 详细审查的核心逻辑。"""
     logger.info("GitLab (详细审查): 正在获取并解析 MR 变更...")
