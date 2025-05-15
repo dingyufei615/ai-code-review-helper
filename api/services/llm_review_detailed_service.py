@@ -72,7 +72,6 @@ DETAILED_REVIEW_SYSTEM_PROMPT = """
 ```
 
 ## 示例输出 1 (对应示例输入 1 的正确 JSON数组 输出)
-```json
 [
   {
     "file": "service/user_service.py",
@@ -86,7 +85,6 @@ DETAILED_REVIEW_SYSTEM_PROMPT = """
     "suggestion": "query = \"SELECT * FROM users WHERE id = %s\"\ncursor.execute(query, (user_id,))"
   }
 ]
-```
 
 ## 示例输入 2 (没有发现重要问题)
 ```json
@@ -109,9 +107,7 @@ DETAILED_REVIEW_SYSTEM_PROMPT = """
 ```
 
 ## 示例输出 2 (对应示例输入 2 的正确 JSON数组 输出)
-```json
 []
-```
 
 # 输出格式
 你的输出必须严格按照以下 JSON数组 格式输出一个审查结果JSON数组。数组中的每个对象代表一个具体的审查意见。

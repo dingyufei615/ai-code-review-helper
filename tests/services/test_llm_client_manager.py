@@ -88,6 +88,34 @@ class TestLlmClientManager(unittest.TestCase):
         )
         self.assertEqual(result, "This is a plain response.")
 
+    @patch('api.services.llm_client_manager.openai_client')
+    def test_execute_llm_chat_completion_strips_markdown_json_wrapper(self, mock_openai_client_instance):
+        mock_response = MagicMock()
+        mock_message = MagicMock()
+        mock_openai_client_instance.chat.completions.create.return_value = mock_response
+        mock_response.choices = [MagicMock(message=mock_message)]
+
+        test_cases = [
+            # Basic Markdown JSON
+            ("```json\n{\"key\": \"value\"}\n```", "{\"key\": \"value\"}"),
+            # Markdown JSON with extra spacing
+            ("  ```json  \n  [{\"item\": 1}]  \n  ```  ", "[{\"item\": 1}]"),
+            # Markdown JSON with think tags outside
+            ("<think>Preprocessing thoughts.</think>\n```json\n{\"data\": \"content\"}\n```", "{\"data\": \"content\"}"),
+           ]
+
+        for i, (llm_output, expected_result) in enumerate(test_cases):
+            with self.subTest(test_index=i, llm_output=llm_output):
+                mock_message.content = llm_output
+                result = execute_llm_chat_completion(
+                    client=mock_openai_client_instance,
+                    model_name="test-model",
+                    system_prompt="System prompt",
+                    user_prompt="User prompt",
+                    context_description=f"Test case for markdown and 'think' tag stripping {i}"
+                )
+                self.assertEqual(result, expected_result)
+
 
 if __name__ == '__main__':
     unittest.main()

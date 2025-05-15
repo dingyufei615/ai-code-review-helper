@@ -1,6 +1,6 @@
 import logging
-import re # 新增导入
-from openai import OpenAI
+import re
+from openai import OpenAI, APIError # 导入 APIError
 from api.core_config import app_configs
 
 logger = logging.getLogger(__name__)
@@ -92,16 +92,29 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
                 raw_content = message.content
                 # 移除 <think>...</think> 标签及其内容
                 # re.DOTALL 使 . 匹配换行符
-                cleaned_content = re.sub(r"<think>.*?</?think>", "", raw_content, flags=re.DOTALL)
-                # 然后去除首尾空白
-                return cleaned_content.strip()
+                content_after_think_tags = re.sub(r"<think>.*?</?think>", "", raw_content, flags=re.DOTALL)
+                # 尝试提取被 ```...``` 包裹的内容，可选地处理语言标记如 json
+                # re.DOTALL 确保 . 可以匹配换行符，处理多行 JSON
+                # \s* 用于匹配 ``` 和实际内容之间，以及内容和末尾 ``` 之间的空白字符
+                # (?:\w*\s*)? 是一个可选的非捕获组，匹配可选的语言名称后跟可选空格
+                markdown_json_match = re.search(r"```(?:\w*\s*)?([\s\S]*?)\s*```", content_after_think_tags, re.DOTALL)
+
+                if markdown_json_match:
+                    # 如果匹配到，提取第一个捕获组的内容
+                    final_content = markdown_json_match.group(1)
+                    logger.info(f"从 Markdown 代码块中提取了 JSON 内容 ({context_description})。")
+                else:
+                    # 如果没有匹配到 Markdown 代码块，则假定内容已经是 JSON 或纯文本
+                    final_content = content_after_think_tags
+                    # 然后去除首尾空白
+                return final_content.strip()
             else:
                 logger.error(f"LLM 响应中缺少 'content' 字段 ({context_description})。响应: {response}")
                 return f"Error: LLM response missing content for {context_description}."
         else:
             logger.error(f"LLM 响应无效或 choices 为空 ({context_description})。响应: {response}")
             return f"Error: Invalid LLM response or empty choices for {context_description}."
-    except openai_client.APIError as e: # openai_client is the OpenAI class, APIError is a static member or accessible via instance
+    except APIError as e:  # 使用导入的 APIError
         logger.error(f"LLM API 请求失败 ({context_description}): {e}")
         return f"Error: LLM API request failed for {context_description}: {str(e)}"
     except Exception as e:
