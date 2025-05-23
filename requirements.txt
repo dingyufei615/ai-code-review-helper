@@ -2,3 +2,4 @@ Flask
 openai
 requests
 redis
+pyyaml
