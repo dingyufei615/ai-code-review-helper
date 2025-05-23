@@ -3,6 +3,7 @@ import logging
 from openai import OpenAI # Ensure OpenAI client is available for type hinting if needed
 from api.core_config import app_configs
 from .llm_client_manager import get_openai_client, execute_llm_chat_completion
+from api.prompt.prompt_loader import get_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -188,11 +189,17 @@ def get_openai_code_review(structured_file_changes):
             if not client:
                 logger.warning(f"在审查 {file_path} 前 OpenAI 客户端变得不可用。将跳过此文件并继续处理其他文件。")
                 continue
+            
+            detailed_review_system_prompt = get_prompt('detailed_review')
+            if "Error: Prompt" in detailed_review_system_prompt: # Check if prompt loading failed
+                logger.error(f"无法加载详细审查的 System Prompt。跳过文件 {file_path}。错误: {detailed_review_system_prompt}")
+                continue
+
 
             review_json_str = execute_llm_chat_completion(
                 client,
                 current_model,
-                DETAILED_REVIEW_SYSTEM_PROMPT,
+                detailed_review_system_prompt,
                 user_prompt_for_llm,
                 "细粒度审查",
                 response_format_type="json_object"
@@ -288,10 +295,15 @@ def get_openai_detailed_review_for_file(file_path: str, file_data: dict, client:
     try:
         logger.info(f"正在发送文件审查请求 (详细): {file_path} 给模型 {model_name}...")
         
+        detailed_review_system_prompt = get_prompt('detailed_review')
+        if "Error: Prompt" in detailed_review_system_prompt: # Check if prompt loading failed
+            logger.error(f"无法加载详细审查的 System Prompt。跳过文件 {file_path}。错误: {detailed_review_system_prompt}")
+            return []
+
         review_json_str = execute_llm_chat_completion(
             client,
             model_name,
-            DETAILED_REVIEW_SYSTEM_PROMPT,
+            detailed_review_system_prompt,
             user_prompt_for_llm,
             f"文件 {file_path} 的细粒度审查",
             response_format_type="json_object"

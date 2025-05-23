@@ -44,14 +44,14 @@ docker run -d -p 8088:8088 \
 ```
 
 > 📌 必需环境变量：
-> - `ADMIN_API_KEY` - 管理后台密码
+> - `ADMIN_API_KEY` - 管理后台密码 默认值：change_this_unified_secret_key
 > - `OPENAI_API_KEY` - AI服务密钥  
 > - `REDIS_HOST` - Redis地址
 
 ## 配置
 
 ### 1. 环境变量 (部分关键)
--   `ADMIN_API_KEY`: **必需**。保护管理接口的密钥。
+-   `ADMIN_API_KEY`: **必需**。保护管理接口的密钥，默认值为`change_this_unified_secret_key` 请务必修改。
 -   `OPENAI_API_KEY`: **必需**。OpenAI API 密钥。
 -   `OPENAI_MODEL`: (默认: `gpt-4o`) 使用的 OpenAI 模型。
 -   `OPENAI_API_BASE_URL`: (可选) OpenAI API 基础 URL，格式为：http(s)://xxxx/v1 默认值：https://api.openai.com/v1
