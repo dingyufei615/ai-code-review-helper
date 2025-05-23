@@ -95,8 +95,8 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
             {"role": "user", "content": final_user_prompt}
         ]
     }
-    if response_format_type:
-        completion_params["response_format"] = {"type": response_format_type}
+    # if response_format_type:
+    #     completion_params["response_format"] = {"type": response_format_type}
 
     try:
         response = client.chat.completions.create(**completion_params)
