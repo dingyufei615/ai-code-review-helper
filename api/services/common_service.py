@@ -3,6 +3,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def get_final_summary_comment_text() -> str:
     """
     生成通用的最终总结评论文本。

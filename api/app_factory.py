@@ -3,11 +3,12 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 
 app = Flask(__name__)
-executor = ThreadPoolExecutor(max_workers=20) # 您可以根据需要调整 max_workers
+executor = ThreadPoolExecutor(max_workers=20)  # 您可以根据需要调整 max_workers
 
 # 获取 app_factory 模块的 logger，如果主应用中配置了日志，它会继承配置
 # 或者，如果希望它有独立的日志行为，可以单独配置
 logger_app_factory = logging.getLogger(__name__)
+
 
 def handle_async_task_exception(future):
     """

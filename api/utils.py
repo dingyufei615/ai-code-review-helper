@@ -22,8 +22,6 @@ def parse_single_file_diff(diff_text, file_path, old_file_path=None):
         "lines_changed": 0
     }
 
-    old_line_num_start = 0
-    new_line_num_start = 0
     old_line_num_current = 0
     new_line_num_current = 0
     hunk_context_lines = []
@@ -48,8 +46,6 @@ def parse_single_file_diff(diff_text, file_path, old_file_path=None):
                     hunk_context_lines = []  # 为新的 hunk 重置
             else:
                 logger.warning(f"警告: 无法解析 {file_path} 中的 hunk 标头: {line}")
-                old_line_num_start = 0  # 重置行号计数器
-                new_line_num_start = 0
                 old_line_num_current = 0
                 new_line_num_current = 0
         elif line.startswith('+'):

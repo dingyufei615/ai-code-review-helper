@@ -1,11 +1,11 @@
 from flask import render_template
 import os
-import sys # 新增导入
+import sys  # 新增导入
 import logging
 import atexit
-import redis # 新增导入
+import redis  # 新增导入
 
-from api.app_factory import app, executor # 导入 executor
+from api.app_factory import app, executor  # 导入 executor
 from api.core_config import (
     SERVER_HOST, SERVER_PORT, app_configs, ADMIN_API_KEY,
     init_redis_client, load_configs_from_redis
@@ -14,8 +14,8 @@ import api.core_config as core_config_module
 from api.services.llm_service import initialize_openai_client
 import api.services.llm_service as llm_service_module
 import api.routes.config_routes
-import api.routes.webhook_routes_detailed # Changed
-import api.routes.webhook_routes_general # Changed
+import api.routes.webhook_routes_detailed  # Changed
+import api.routes.webhook_routes_general  # Changed
 
 
 # --- Admin Page ---
@@ -51,7 +51,8 @@ if __name__ == '__main__':
         load_configs_from_redis()  # 这会填充 github_repo_configs 和 gitlab_project_configs
     except (ValueError, redis.exceptions.ConnectionError) as e:
         logger.critical(f"关键错误: Redis 初始化失败 - {e}")
-        logger.critical("服务无法启动。请确保 Redis 相关环境变量 (如 REDIS_HOST, REDIS_PORT) 已正确设置，并且 Redis 服务可用。")
+        logger.critical(
+            "服务无法启动。请确保 Redis 相关环境变量 (如 REDIS_HOST, REDIS_PORT) 已正确设置，并且 Redis 服务可用。")
         sys.exit(1)
 
     logger.info("--- 当前应用配置 ---")

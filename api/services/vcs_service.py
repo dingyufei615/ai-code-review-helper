@@ -202,19 +202,19 @@ def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = Fals
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
-        if is_github and "application/vnd.github.v3.raw" in headers.get("Accept", ""): # GitHub raw URL
+        if is_github and "application/vnd.github.v3.raw" in headers.get("Accept", ""):  # GitHub raw URL
             # Try to decode as UTF-8, fallback to ISO-8859-1 then skip if fails
             try:
                 return response.content.decode('utf-8')
             except UnicodeDecodeError:
                 try:
-                    return response.content.decode('iso-8859-1') # Common fallback
+                    return response.content.decode('iso-8859-1')  # Common fallback
                 except UnicodeDecodeError:
                     logger.warning(f"无法将 {url} 的内容解码为 UTF-8 或 ISO-8859-1。可能为二进制文件。")
                     return None
-        else: # GitHub Contents API or GitLab Files API
+        else:  # GitHub Contents API or GitLab Files API
             data = response.json()
-            
+
             # 文件大小检查 (适用于返回 JSON 并包含 size 字段的 API)
             file_size = data.get('size')
             if file_size is not None and max_size_bytes is not None and file_size > max_size_bytes:
@@ -232,7 +232,7 @@ def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = Fals
                     except UnicodeDecodeError:
                         logger.warning(f"无法将 {url} 的 base64 内容解码为 UTF-8 或 ISO-8859-1。可能为二进制文件。")
                         return None
-            elif data.get("content") == "": # Empty file
+            elif data.get("content") == "":  # Empty file
                 return ""
             else:
                 logger.warning(f"从 {url} 获取文件内容时未找到 base64 内容或编码。响应: {data}")
@@ -245,7 +245,8 @@ def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = Fals
         return None
 
 
-def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_number: int, access_token: str, pr_data: dict):
+def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_number: int, access_token: str,
+                                          pr_data: dict):
     """
     为 GitHub PR 获取粗粒度审查所需的数据：文件列表、每个文件的 diff、旧内容和新内容。
     pr_data 是 GitHub PR webhook 负载中的 'pull_request' 对象。
@@ -263,13 +264,13 @@ def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_numbe
         "Authorization": f"token {access_token}",
         "Accept": "application/vnd.github.v3+json"
     }
-    headers_content_api = { # For fetching specific file content (potentially base_sha)
+    headers_content_api = {  # For fetching specific file content (potentially base_sha)
         "Authorization": f"token {access_token}",
-        "Accept": "application/vnd.github.v3+json" # Gets JSON with base64 content
+        "Accept": "application/vnd.github.v3+json"  # Gets JSON with base64 content
     }
-    headers_raw_content_api = { # For fetching raw file content (new_content from raw_url)
+    headers_raw_content_api = {  # For fetching raw file content (new_content from raw_url)
         "Authorization": f"token {access_token}",
-        "Accept": "application/vnd.github.v3.raw" # Gets raw content directly
+        "Accept": "application/vnd.github.v3.raw"  # Gets raw content directly
     }
 
     general_review_data = []
@@ -286,9 +287,9 @@ def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_numbe
 
         for file_item in files_api_data:
             file_path = file_item.get('filename')
-            status = file_item.get('status') # 'added', 'modified', 'removed', 'renamed'
+            status = file_item.get('status')  # 'added', 'modified', 'removed', 'renamed'
             diff_text = file_item.get('patch', '')
-            raw_url = file_item.get('raw_url') # Content at HEAD
+            raw_url = file_item.get('raw_url')  # Content at HEAD
             previous_filename = file_item.get('previous_filename')
 
             file_data_entry = {
@@ -305,13 +306,15 @@ def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_numbe
                 # We'll attempt to fetch and let _fetch_file_content_from_url handle large/binary via its internal JSON parsing if not raw
                 old_content_url = f"{current_github_api_url}/repos/{owner}/{repo_name}/contents/{path_for_old_content}?ref={base_sha}"
                 logger.info(f"获取旧内容: {path_for_old_content} (ref: {base_sha}) 从 {old_content_url}")
-                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers_content_api, is_github=False, max_size_bytes=1024*1024) # Not raw, expect JSON, add size limit
+                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers_content_api,
+                                                                              is_github=False,
+                                                                              max_size_bytes=1024 * 1024)  # Not raw, expect JSON, add size limit
 
             general_review_data.append(file_data_entry)
 
     except requests.exceptions.RequestException as e:
         logger.error(f"从 GitHub API ({files_url}) 获取粗粒度审查数据时出错: {e}")
-        return None # Indicate error
+        return None  # Indicate error
     except Exception as e:
         logger.exception(f"为 {owner}/{repo_name} PR {pull_number} 准备粗粒度审查数据时发生意外错误:")
         return None
@@ -319,7 +322,8 @@ def get_github_pr_data_for_general_review(owner: str, repo_name: str, pull_numbe
     return general_review_data
 
 
-def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_token: str, mr_attrs: dict, position_info: dict):
+def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_token: str, mr_attrs: dict,
+                                          position_info: dict):
     """
     为 GitLab MR 获取粗粒度审查所需的数据：文件列表、每个文件的 diff、旧内容和新内容。
     mr_attrs 是 GitLab MR webhook 负载中的 'object_attributes'。
@@ -331,15 +335,17 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
 
     project_config = gitlab_project_configs.get(str(project_id), {})
     project_specific_instance_url = project_config.get("instance_url")
-    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL", "https://gitlab.com")
+    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL",
+                                                                                   "https://gitlab.com")
 
     base_sha = position_info.get("base_commit_sha")
     head_sha = position_info.get("head_commit_sha")
-    if not head_sha: # Fallback to last_commit from webhook payload if not in position_info
+    if not head_sha:  # Fallback to last_commit from webhook payload if not in position_info
         head_sha = mr_attrs.get('last_commit', {}).get('id')
 
     if not base_sha or not head_sha:
-        logger.error(f"GitLab MR {project_id}#{mr_iid}: 缺少 base_sha 或 head_sha，无法获取文件内容。Base: {base_sha}, Head: {head_sha}")
+        logger.error(
+            f"GitLab MR {project_id}#{mr_iid}: 缺少 base_sha 或 head_sha，无法获取文件内容。Base: {base_sha}, Head: {head_sha}")
         return None
 
     headers = {"PRIVATE-TOKEN": access_token}
@@ -347,8 +353,8 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
 
     # GitLab MR changes are typically fetched via versions API then details of latest version
     # This gives us the diffs. We then fetch content for each file.
-    latest_version_id = position_info.get("latest_version_id") # Assuming this is passed in position_info
-    if not latest_version_id: # Fallback: try to get versions if not pre-fetched
+    latest_version_id = position_info.get("latest_version_id")  # Assuming this is passed in position_info
+    if not latest_version_id:  # Fallback: try to get versions if not pre-fetched
         versions_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/versions"
         try:
             logger.info(f"从 {versions_url} 获取 MR 版本 (用于粗粒度审查)。")
@@ -363,7 +369,7 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
         except requests.exceptions.RequestException as e:
             logger.error(f"从 GitLab API ({versions_url}) 获取 MR 版本时出错: {e}")
             return None
-    
+
     version_detail_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/versions/{latest_version_id}"
     try:
         logger.info(f"从 {version_detail_url} 获取 MR 版本详情 (用于粗粒度审查)。")
@@ -384,9 +390,9 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
             if is_new: status = "added"
             if is_deleted: status = "deleted"
             if is_renamed: status = "renamed"
-            
+
             file_data_entry = {
-                "file_path": new_path, # For deleted files, new_path is the path of the deleted file
+                "file_path": new_path,  # For deleted files, new_path is the path of the deleted file
                 "status": status,
                 "diff_text": diff_text,
                 "old_content": None
@@ -396,13 +402,14 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
             # File path needs to be URL-encoded.
 
             # Get old content (if not new file)
-            path_for_old_content = old_path if old_path else new_path # If renamed, old_path is correct. If modified, old_path is same as new_path.
+            path_for_old_content = old_path if old_path else new_path  # If renamed, old_path is correct. If modified, old_path is same as new_path.
             if not is_new and path_for_old_content:
                 encoded_old_path = requests.utils.quote(path_for_old_content, safe='')
                 old_content_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/repository/files/{encoded_old_path}?ref={base_sha}"
                 logger.info(f"获取旧内容 (GitLab): {path_for_old_content} (ref: {base_sha})")
-                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers, max_size_bytes=1024*1024)
-            
+                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, headers,
+                                                                              max_size_bytes=1024 * 1024)
+
             general_review_data.append(file_data_entry)
 
     except requests.exceptions.RequestException as e:
@@ -411,7 +418,7 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
     except Exception as e:
         logger.exception(f"为 GitLab MR {project_id}#{mr_iid} 准备粗粒度审查数据时发生意外错误:")
         return None
-        
+
     return general_review_data
 
 
@@ -619,7 +626,7 @@ def add_github_pr_general_comment(owner: str, repo_name: str, pull_number: int, 
         return False
     if not review_text.strip():
         logger.info("粗粒度审查文本为空，不添加评论。")
-        return True # Technically successful as there's nothing to post
+        return True  # Technically successful as there's nothing to post
 
     current_github_api_url = app_configs.get("GITHUB_API_URL", "https://api.github.com")
     # General PR comments are posted as issue comments
@@ -658,13 +665,14 @@ def add_gitlab_mr_general_comment(project_id: str, mr_iid: int, access_token: st
 
     project_config = gitlab_project_configs.get(str(project_id), {})
     project_specific_instance_url = project_config.get("instance_url")
-    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL", "https://gitlab.com")
-    
+    current_gitlab_instance_url = project_specific_instance_url or app_configs.get("GITLAB_INSTANCE_URL",
+                                                                                   "https://gitlab.com")
+
     # Post as a new discussion (thread) without position for general comments
     comment_url = f"{current_gitlab_instance_url}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/discussions"
     headers = {"PRIVATE-TOKEN": access_token, "Content-Type": "application/json"}
     payload = {"body": review_text}
-    
+
     response_obj = None
     try:
         response_obj = requests.post(comment_url, headers=headers, json=payload, timeout=30)

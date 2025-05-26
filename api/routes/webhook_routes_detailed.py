@@ -1,21 +1,20 @@
 from flask import request, abort, jsonify
 import json
 import logging
-from api.app_factory import app, executor, handle_async_task_exception # 导入 executor 和回调
+from api.app_factory import app, executor, handle_async_task_exception  # 导入 executor 和回调
 from api.core_config import (
     github_repo_configs, gitlab_project_configs, app_configs,
     is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
 )
 from api.utils import verify_github_signature, verify_gitlab_signature
 from api.services.vcs_service import (
-    get_github_pr_changes, add_github_pr_comment, 
+    get_github_pr_changes, add_github_pr_comment,
     get_gitlab_mr_changes, add_gitlab_mr_comment,
-    add_github_pr_general_comment, # Used for final summary
-    add_gitlab_mr_general_comment  # Used for final summary
-)
-# 注意：get_openai_code_review 仍被 GitLab 逻辑使用，所以保留
-# 新增导入 get_openai_detailed_review_for_file 用于 GitHub 的逐文件审查
-from api.services.llm_service import get_openai_code_review, get_openai_detailed_review_for_file, get_openai_client
+    add_github_pr_general_comment,
+    add_gitlab_mr_general_comment)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from api.services.llm_service import get_openai_detailed_review_for_file, \
+    get_openai_client  # 移除了 get_openai_code_review
 from api.services.notification_service import send_notifications
 from api.services.common_service import get_final_summary_comment_text
 from .webhook_helpers import _save_review_results_and_log
@@ -47,10 +46,10 @@ def _get_wecom_summary_line(num_reviews, vcs_type):
         return "AI Code Review 已完成，所有检查均已通过，无审查建议。"
     else:
         return f"AI Code Review 已完成，共生成 {num_reviews} 条审查建议。请前往 {entity_name} 查看详情。"
-# --- End Helper Functions ---
 
 
-def _process_github_detailed_payload(access_token, owner, repo_name, pull_number, head_sha, repo_full_name, pr_title, pr_html_url, repo_web_url, pr_source_branch, pr_target_branch):
+def _process_github_detailed_payload(access_token, owner, repo_name, pull_number, head_sha, repo_full_name, pr_title,
+                                     pr_html_url, repo_web_url, pr_source_branch, pr_target_branch):
     """实际处理 GitHub 详细审查的核心逻辑 (逐文件审查和评论)。"""
     logger.info("GitHub (详细审查): 正在获取并解析 PR 变更...")
     structured_changes = get_github_pr_changes(owner, repo_name, pull_number, access_token)
@@ -69,44 +68,45 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
 
     all_reviews_for_redis = []
     total_comments_posted_successfully = 0
-    
-    # 获取 OpenAI 客户端和模型配置一次
+
     client = get_openai_client()
     if not client:
         logger.error("GitHub (详细审查): OpenAI 客户端不可用。中止审查。")
-        # 可以考虑发送一个错误通知或评论
         return
     current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    concurrency = min(app_configs.get("REVIEW_CONCURRENCY", 4), app_configs.get("REVIEW_CONCURRENCY_MAX", 20))
+    if concurrency <= 0: concurrency = 1  # 确保至少有1个并发
 
-    logger.info(f'GitHub (详细审查): 将对 {len(structured_changes)} 个文件逐一发送给 {current_model} 进行审查...')
+    logger.info(
+        f'GitHub (详细审查): 将对 {len(structured_changes)} 个文件使用最多 {concurrency} 个并发进行审查 ({current_model})...')
 
-    for file_path, file_data in structured_changes.items():
-        logger.info(f"GitHub (详细审查): 正在处理文件: {file_path}")
-        reviews_for_file_list = get_openai_detailed_review_for_file(file_path, file_data, client, current_model)
+    # 用于收集并发任务的结果
+    futures = []
+    # 使用局部的 ThreadPoolExecutor 控制并发数
+    with ThreadPoolExecutor(max_workers=concurrency) as file_executor:
+        for file_path, file_data in structured_changes.items():
+            logger.info(f"GitHub (详细审查): 提交文件 {file_path} 的审查任务。")
+            # 提交任务到执行器
+            # 每个任务将处理单个文件的审查和评论
+            future = file_executor.submit(
+                _process_single_github_file_detailed,
+                file_path, file_data, owner, repo_name, pull_number, access_token, head_sha, client, current_model
+            )
+            futures.append(future)
 
-        if reviews_for_file_list: # reviews_for_file_list 是一个 Python 列表
-            all_reviews_for_redis.extend(reviews_for_file_list)
-            logger.info(f"GitHub (详细审查): 文件 {file_path} 发现 {len(reviews_for_file_list)} 个问题。正在尝试添加评论...")
-            
-            file_comments_added, file_comments_failed = 0, 0
-            for review_item in reviews_for_file_list:
-                # 确保 review_item 中包含 old_path (如果适用)
-                if "old_path" not in review_item and file_data.get("old_path"):
-                    review_item["old_path"] = file_data["old_path"]
-                
-                success = add_github_pr_comment(owner, repo_name, pull_number, access_token, review_item, head_sha)
-                if success:
-                    file_comments_added += 1
-                    total_comments_posted_successfully +=1
-                else:
-                    file_comments_failed += 1
-            logger.info(f"GitHub (详细审查): 文件 {file_path} 评论添加完成: {file_comments_added} 成功, {file_comments_failed} 失败。")
-        else:
-            logger.info(f"GitHub (详细审查): 文件 {file_path} 未发现问题或审查时出错。")
+        # 等待所有任务完成并收集结果
+        for future in as_completed(futures):
+            try:
+                file_reviews, comments_added_for_file = future.result()
+                if file_reviews:
+                    all_reviews_for_redis.extend(file_reviews)
+                total_comments_posted_successfully += comments_added_for_file
+            except Exception as exc:
+                logger.error(f'GitHub (详细审查): 处理文件时生成了一个异常: {exc}', exc_info=True)
 
-    # 所有文件处理完毕后
-    logger.info("--- GitHub (详细审查): 所有文件处理完毕 ---")
+    logger.info("--- GitHub (详细审查): 所有文件并发处理完毕 ---")
     logger.info(f"总共收集到 {len(all_reviews_for_redis)} 条审查意见用于存储。")
+    logger.info(f"总共成功发布了 {total_comments_posted_successfully} 条评论。")
 
     # 保存所有收集到的审查结果到 Redis
     final_review_json_for_redis = "[]"
@@ -126,7 +126,7 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
     )
 
     # 如果没有任何评论被成功发布 (或 all_reviews_for_redis 为空)
-    if not all_reviews_for_redis: # 或者 total_comments_posted_successfully == 0
+    if not all_reviews_for_redis:  # 或者 total_comments_posted_successfully == 0
         _post_no_issues_comment(
             vcs_type='github',
             comment_function=add_github_pr_comment,
@@ -150,7 +150,7 @@ def _process_github_detailed_payload(access_token, owner, repo_name, pull_number
 {review_summary_line}
 """
         # send_to_wecom_bot(summary_content) # 旧调用 - 已被 send_notifications 替代
-        send_notifications(summary_content) # 新调用
+        send_notifications(summary_content)  # 新调用
 
     if head_sha:
         mark_commit_as_processed('github', repo_full_name, str(pull_number), head_sha)
@@ -197,12 +197,13 @@ def github_webhook():
 
     action = payload_data.get('action')
     pr_data = payload_data.get('pull_request', {})
-    pr_state = pr_data.get('state') # 'open', 'closed'
-    pr_merged = pr_data.get('merged', False) # True if merged
+    pr_state = pr_data.get('state')  # 'open', 'closed'
+    pr_merged = pr_data.get('merged', False)  # True if merged
 
     if action == 'closed':
         pull_number_str = str(pr_data.get('number'))
-        logger.info(f"GitHub: PR {repo_full_name}#{pull_number_str} 已关闭 (合并状态: {pr_merged})。正在清理 Redis 记录...")
+        logger.info(
+            f"GitHub: PR {repo_full_name}#{pull_number_str} 已关闭 (合并状态: {pr_merged})。正在清理 Redis 记录...")
         remove_processed_commit_entries_for_pr_mr('github', repo_full_name, pull_number_str)
         return f"PR {pull_number_str} 已关闭，记录已清理。", 200
 
@@ -247,22 +248,57 @@ def github_webhook():
         pr_target_branch=pr_target_branch
     )
     future.add_done_callback(handle_async_task_exception)
-    
+
     logger.info(f"GitHub (详细审查): PR {repo_full_name}#{pull_number} 的处理任务已提交到后台执行。")
     return jsonify({"message": "GitHub Detailed Webhook processing task accepted."}), 202
 
 
-def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_sha_payload, project_data, mr_attrs, project_web_url, mr_title, mr_url, project_name_from_payload):
+def _process_single_github_file_detailed(file_path, file_data, owner, repo_name, pull_number, access_token, head_sha,
+                                         client, current_model):
+    """处理单个 GitHub 文件的详细审查和评论。由 ThreadPoolExecutor 调用。"""
+    logger.info(f"GitHub (详细审查): 线程开始处理文件: {file_path}")
+    reviews_for_file_list = get_openai_detailed_review_for_file(file_path, file_data, client, current_model)
+
+    file_comments_added = 0
+    if reviews_for_file_list:
+        logger.info(f"GitHub (详细审查): 文件 {file_path} 发现 {len(reviews_for_file_list)} 个问题。正在尝试添加评论...")
+        for review_item in reviews_for_file_list:
+            if "old_path" not in review_item and file_data.get("old_path"):
+                review_item["old_path"] = file_data["old_path"]
+
+            success = add_github_pr_comment(owner, repo_name, pull_number, access_token, review_item, head_sha)
+            if success:
+                file_comments_added += 1
+        logger.info(f"GitHub (详细审查): 文件 {file_path} 评论添加完成: {file_comments_added} 成功。")
+    else:
+        logger.info(f"GitHub (详细审查): 文件 {file_path} 未发现问题或审查时出错。")
+
+    logger.info(f"GitHub (详细审查): 线程结束处理文件: {file_path}")
+    return reviews_for_file_list, file_comments_added
+
+
+def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_sha_payload, project_data, mr_attrs,
+                                     project_web_url, mr_title, mr_url, project_name_from_payload):
     """实际处理 GitLab 详细审查的核心逻辑。"""
     logger.info("GitLab (详细审查): 正在获取并解析 MR 变更...")
     structured_changes, position_info = get_gitlab_mr_changes(project_id_str, mr_iid, access_token)
 
     if position_info is None: position_info = {}
-    if head_sha_payload and not position_info.get("head_sha"):
+    if head_sha_payload and not position_info.get("head_sha"):  # 优先使用来自 webhook 的 head_sha
         position_info["head_sha"] = head_sha_payload
-        logger.info(f"GitLab (详细审查): 使用来自 webhook 负载的 head_sha: {head_sha_payload}")
+        logger.info(f"GitLab (详细审查): 使用来自 webhook 负载的 head_sha: {head_sha_payload} 更新 position_info。")
+
+    # 确保 position_info 中的 head_sha 是最新的，如果 API 调用返回了更精确的 head_sha
+    # get_gitlab_mr_changes 返回的 position_info 可能包含更准确的 head_sha
+    current_commit_sha_for_saving_and_marking = position_info.get("head_sha", head_sha_payload)
+    if not current_commit_sha_for_saving_and_marking:
+        logger.error("GitLab (详细审查): 无法确定有效的 head_sha 用于保存和标记。中止。")
+        # 可能需要更优雅地处理，例如不标记已处理，但尝试保存（如果可能）
+        return
+
     if not all(k in position_info for k in ["base_sha", "start_sha", "head_sha"]):
-        logger.warning("GitLab (详细审查): 警告: 缺少用于精确定位评论的关键提交 SHA 信息。")
+        logger.warning(
+            f"GitLab (详细审查): 警告: 缺少用于精确定位评论的关键提交 SHA 信息。Position Info: {position_info}")
 
     if structured_changes is None:
         logger.warning("GitLab (详细审查): 获取或解析 diff 内容失败。中止审查。")
@@ -271,76 +307,83 @@ def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_
         logger.info("GitLab (详细审查): 解析后未检测到变更。无需审查。")
         _save_review_results_and_log(
             vcs_type='gitlab', identifier=project_id_str, pr_mr_id=str(mr_iid),
-            commit_sha=head_sha_payload, review_json_string=json.dumps([]),
+            commit_sha=current_commit_sha_for_saving_and_marking, review_json_string=json.dumps([]),
             project_name_for_gitlab=project_name_from_payload
         )
-        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), head_sha_payload)
+        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), current_commit_sha_for_saving_and_marking)
         return
 
-    logger.info(f'GitLab (详细审查): 正在发送变更给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
-    review_result_json = get_openai_code_review(structured_changes)
+    all_reviews_for_redis = []
+    total_comments_posted_successfully = 0
 
-    logger.info("--- GitLab (详细审查): AI 代码审查结果 (JSON) ---")
-    logger.info(f"{review_result_json}")
-    logger.info("--- GitLab (详细审查) 审查 JSON 结束 ---")
+    client = get_openai_client()
+    if not client:
+        logger.error("GitLab (详细审查): OpenAI 客户端不可用。中止审查。")
+        return
+    current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
+    concurrency = min(app_configs.get("REVIEW_CONCURRENCY", 4), app_configs.get("REVIEW_CONCURRENCY_MAX", 20))
+    if concurrency <= 0: concurrency = 1
 
-    current_commit_sha_for_saving = head_sha_payload
-    if not current_commit_sha_for_saving and position_info and position_info.get("head_sha"):
-        current_commit_sha_for_saving = position_info.get("head_sha")
-        logger.info(f"GitLab (详细审查): 使用来自 position_info 的 head_sha ({current_commit_sha_for_saving}) 进行后续操作。")
-    
+    logger.info(
+        f'GitLab (详细审查): 将对 {len(structured_changes)} 个文件使用最多 {concurrency} 个并发进行审查 ({current_model})...')
+
+    futures = []
+    with ThreadPoolExecutor(max_workers=concurrency) as file_executor:
+        for file_path, file_data in structured_changes.items():
+            logger.info(f"GitLab (详细审查): 提交文件 {file_path} 的审查任务。")
+            future = file_executor.submit(
+                _process_single_gitlab_file_detailed,
+                file_path, file_data, project_id_str, mr_iid, access_token, position_info, client, current_model
+            )
+            futures.append(future)
+
+        for future in as_completed(futures):
+            try:
+                file_reviews, comments_added_for_file = future.result()
+                if file_reviews:
+                    all_reviews_for_redis.extend(file_reviews)
+                total_comments_posted_successfully += comments_added_for_file
+            except Exception as exc:
+                logger.error(f'GitLab (详细审查): 处理文件时生成了一个异常: {exc}', exc_info=True)
+
+    logger.info("--- GitLab (详细审查): 所有文件并发处理完毕 ---")
+    logger.info(f"总共收集到 {len(all_reviews_for_redis)} 条审查意见用于存储。")
+    logger.info(f"总共成功发布了 {total_comments_posted_successfully} 条评论。")
+
+    final_review_json_for_redis = "[]"
+    if all_reviews_for_redis:
+        try:
+            final_review_json_for_redis = json.dumps(all_reviews_for_redis, ensure_ascii=False, indent=2)
+        except TypeError as e:
+            logger.error(f"GitLab (详细审查): 序列化最终审查列表到 JSON 时出错: {e}")  # 忽略序列化失败的异常 打印日志即可
+
     _save_review_results_and_log(
         vcs_type='gitlab',
         identifier=project_id_str,
         pr_mr_id=str(mr_iid),
-        commit_sha=current_commit_sha_for_saving,
-        review_json_string=review_result_json,
+        commit_sha=current_commit_sha_for_saving_and_marking,
+        review_json_string=final_review_json_for_redis,
         project_name_for_gitlab=project_name_from_payload
     )
 
-    reviews = []
-    try:
-        parsed_data = json.loads(review_result_json)
-        if isinstance(parsed_data, list): reviews = parsed_data
-        logger.info(f"GitLab (详细审查): 从 JSON 成功解析 {len(reviews)} 个审查项。")
-    except json.JSONDecodeError as e:
-        logger.error(f"GitLab (详细审查): 解析审查结果 JSON 时出错: {e}。原始数据: {review_result_json[:500]}")
-
-    if reviews:
-        logger.info(f"GitLab (详细审查): 尝试向 MR 添加 {len(reviews)} 条审查评论...")
-        comments_added, comments_failed = 0, 0
-        for review in reviews:
-            if isinstance(review, dict) and "file" in review:
-                file_path = review["file"]
-                if file_path in structured_changes:
-                    review["old_path"] = structured_changes[file_path].get("old_path")
-            if isinstance(review, dict):
-                success = add_gitlab_mr_comment(project_id_str, mr_iid, access_token, review, position_info)
-                if success:
-                    comments_added += 1
-                else:
-                    comments_failed += 1
-            else:
-                logger.warning(f"GitLab (详细审查): 跳过无效的审查项: {review}");
-                comments_failed += 1
-        logger.info(f"GitLab (详细审查): 添加评论完成: {comments_added} 成功, {comments_failed} 失败。")
-    else:
+    if not all_reviews_for_redis:  # 如果没有任何评论被成功发布 (或 all_reviews_for_redis 为空)
         _post_no_issues_comment(
             vcs_type='gitlab',
-            comment_function=add_gitlab_mr_comment,
-            project_id=project_id_str,
+            comment_function=add_gitlab_mr_comment,  # 注意：此函数签名与GitHub不同
+            project_id=project_id_str,  # add_gitlab_mr_comment 需要 project_id
             mr_iid=mr_iid,
             access_token=access_token,
-            position_info=position_info
+            position_info=position_info  # 传递 position_info
         )
 
-    if app_configs.get("WECOM_BOT_WEBHOOK_URL"):
-        logger.info("GitLab (详细审查): 正在发送摘要通知到企业微信机器人...")
-        project_name = project_data.get('name', project_id_str)
+    # 企业微信/自定义 Webhook 通知
+    if app_configs.get("WECOM_BOT_WEBHOOK_URL") or app_configs.get("CUSTOM_WEBHOOK_URL"):
+        logger.info("GitLab (详细审查): 正在发送摘要通知...")
+        project_name = project_data.get('name', project_name_from_payload or project_id_str)  # 确保有项目名
         mr_source_branch = mr_attrs.get('source_branch')
         mr_target_branch = mr_attrs.get('target_branch')
 
-        review_summary_line = _get_wecom_summary_line(len(reviews), 'gitlab')
+        review_summary_line = _get_wecom_summary_line(len(all_reviews_for_redis), 'gitlab')  # 使用 all_reviews_for_redis
         summary_content = f"""**AI代码审查完成 (GitLab)**
 
 > 项目: [{project_name}]({project_web_url})
@@ -349,18 +392,41 @@ def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_
 
 {review_summary_line}
 """
-        # send_to_wecom_bot(summary_content) # 旧调用
-        send_notifications(summary_content) # 新调用
+        send_notifications(summary_content)
 
-    if head_sha_payload:
-        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), head_sha_payload)
-    elif position_info and position_info.get("head_sha"):
+    if current_commit_sha_for_saving_and_marking:
+        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), current_commit_sha_for_saving_and_marking)
+    else:
         logger.warning(
-            f"警告: GitLab (详细审查) head_sha_payload 为空，使用来自 position_info 的 head_sha 进行标记处理: {position_info.get('head_sha')}")
-        mark_commit_as_processed('gitlab', project_id_str, str(mr_iid), position_info.get("head_sha"))
+            f"警告: GitLab (详细审查) MR {project_name_from_payload or project_id_str}#{mr_iid} 的 commit SHA 未知。无法标记为已处理。")
 
     final_comment_text = get_final_summary_comment_text()
     add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, final_comment_text)
+
+
+def _process_single_gitlab_file_detailed(file_path, file_data, project_id_str, mr_iid, access_token, position_info,
+                                         client, current_model):
+    """处理单个 GitLab 文件的详细审查和评论。由 ThreadPoolExecutor 调用。"""
+    logger.info(f"GitLab (详细审查): 线程开始处理文件: {file_path}")
+    reviews_for_file_list = get_openai_detailed_review_for_file(file_path, file_data, client, current_model)
+
+    file_comments_added = 0
+    if reviews_for_file_list:
+        logger.info(f"GitLab (详细审查): 文件 {file_path} 发现 {len(reviews_for_file_list)} 个问题。正在尝试添加评论...")
+        for review_item in reviews_for_file_list:
+            # 确保 review_item 中包含 old_path (如果适用)
+            if "old_path" not in review_item and file_data.get("old_path"):
+                review_item["old_path"] = file_data["old_path"]
+
+            success = add_gitlab_mr_comment(project_id_str, mr_iid, access_token, review_item, position_info)
+            if success:
+                file_comments_added += 1
+        logger.info(f"GitLab (详细审查): 文件 {file_path} 评论添加完成: {file_comments_added} 成功。")
+    else:
+        logger.info(f"GitLab (详细审查): 文件 {file_path} 未发现问题或审查时出错。")
+
+    logger.info(f"GitLab (详细审查): 线程结束处理文件: {file_path}")
+    return reviews_for_file_list, file_comments_added
 
 
 @app.route('/gitlab_webhook', methods=['POST'])
@@ -411,7 +477,8 @@ def gitlab_webhook():
 
     if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
         mr_iid_str = str(mr_iid)
-        logger.info(f"GitLab: MR {project_id_str}#{mr_iid_str} 已 {mr_action if mr_action in ['close', 'merge'] else mr_state}。正在清理 Redis 记录...")
+        logger.info(
+            f"GitLab: MR {project_id_str}#{mr_iid_str} 已 {mr_action if mr_action in ['close', 'merge'] else mr_state}。正在清理 Redis 记录...")
         remove_processed_commit_entries_for_pr_mr('gitlab', project_id_str, mr_iid_str)
         return f"MR {mr_iid_str} 已 {mr_action if mr_action in ['close', 'merge'] else mr_state}，记录已清理。", 200
 
