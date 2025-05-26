@@ -1,5 +1,5 @@
 import logging
-import re # 新增导入
+import re  # 新增导入
 from openai import OpenAI
 from api.core_config import app_configs
 
@@ -74,7 +74,7 @@ def get_openai_client():
 
 
 def execute_llm_chat_completion(client, model_name: str, system_prompt: str, user_prompt: str, context_description: str,
-                                response_format_type: str = None):
+                                temperature: float = 0) -> str:
     """
     执行 LLM 请求。
 
@@ -83,20 +83,19 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
     :param system_prompt: 系统提示。
     :param user_prompt: 用户原始提示。
     :param context_description: 用于 _prepare_llm_user_prompt 的上下文描述。
-    :param response_format_type: 可选，响应格式类型 (例如 "json_object")。
+    :param temperature: 模型温度
     :return: LLM 的响应内容。
     """
     final_user_prompt = _prepare_llm_user_prompt(user_prompt, model_name, context_description)
 
     completion_params = {
         "model": model_name,
+        "temperature": temperature,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": final_user_prompt}
         ]
     }
-    # if response_format_type:
-    #     completion_params["response_format"] = {"type": response_format_type}
 
     try:
         response = client.chat.completions.create(**completion_params)
@@ -116,7 +115,7 @@ def execute_llm_chat_completion(client, model_name: str, system_prompt: str, use
         else:
             logger.error(f"LLM 响应无效或 choices 为空 ({context_description})。响应: {response}")
             return f"Error: Invalid LLM response or empty choices for {context_description}."
-    except openai_client.APIError as e: # openai_client is the OpenAI class, APIError is a static member or accessible via instance
+    except openai_client.APIError as e:  # openai_client is the OpenAI class, APIError is a static member or accessible via instance
         logger.error(f"LLM API 请求失败 ({context_description}): {e}")
         return f"Error: LLM API request failed for {context_description}: {str(e)}"
     except Exception as e:

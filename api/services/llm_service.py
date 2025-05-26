@@ -21,7 +21,7 @@ __all__ = [
     "initialize_openai_client",
     "get_openai_client",
     "get_openai_code_review",
-    "get_openai_detailed_review_for_file", # 新增导出
+    "get_openai_detailed_review_for_file",  # 新增导出
     "get_openai_code_review_general",
 ]
 

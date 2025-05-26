@@ -39,19 +39,17 @@ def get_openai_code_review_general(file_data: dict):
             return "OpenAI client is not available. Skipping general review for single file."
 
         general_review_system_prompt = get_prompt('general_review')
-        if "Error: Prompt" in general_review_system_prompt: # Check if prompt loading failed
+        if "Error: Prompt" in general_review_system_prompt:  # Check if prompt loading failed
             error_msg = f"无法加载通用审查的 System Prompt。错误: {general_review_system_prompt}"
             logger.error(error_msg)
-            return error_msg # Return the error message to be potentially shown to user/logged
-
+            return error_msg  # Return the error message to be potentially shown to user/logged
 
         review_text = execute_llm_chat_completion(
             client,
             current_model,
             general_review_system_prompt,
-            user_prompt_content_for_llm,  # This is already the JSON string
+            user_prompt_content_for_llm,
             "粗粒度审查"
-            # No response_format_type for plain text Markdown
         )
 
         logger.info(f"-------------LLM 粗粒度审查输出-----------")
