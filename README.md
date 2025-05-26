@@ -9,25 +9,25 @@
 
 - **多平台支持**: 集成 GitHub 和 GitLab Webhook，监听 Pull Request / Merge Request 事件。
 - **智能审查模式**:
-    - **详细审查 (`/github_webhook`, `/gitlab_webhook`)**: AI 对每个变更文件进行分析，旨在找出具体问题。审查意见会以结构化的形式（例如，定位到特定代码行、问题分类、严重程度、分析和建议）逐条评论到 PR/MR。AI 模型会输出 JSON 格式的分析结果，系统再将其转换为多条独立的评论。
-    - **通用审查 (`/github_webhook_general`, `/gitlab_webhook_general`)**: AI 对每个变更文件进行整体性分析，并为每个文件生成一个 Markdown 格式的总结性评论。
+    - **详细审查 (`/github_webhook`, `/gitlab_webhook`)**: AI 对每个变更文件进行分析，旨在找出具体问题。审查意见会以结构化的形式（例如，定位到特定代码行、问题分类、严重程度、分析和建议）逐条评论到 PR/MR。AI 模型被指示输出 **JSON 格式**的分析结果，系统再将其转换为多条独立的评论。
+    - **通用审查 (`/github_webhook_general`, `/gitlab_webhook_general`)**: AI 对每个变更文件进行整体性分析，并为每个文件生成一个 **Markdown 格式**的总结性评论。
 - **自动化流程**:
     - 自动将 AI 审查意见（详细模式下为多条，通用模式下为每个文件一条）发布到 PR/MR。
     - 在所有文件审查完毕后，自动在 PR/MR 中发布一条总结性评论。
     - 即便 AI 未发现任何值得报告的问题，也会发布相应的友好提示和总结评论。
-    - 异步处理审查任务，快速响应 Webhook。
+    - 异步处理审查任务（并发数可通过 `REVIEW_CONCURRENCY` 配置），快速响应 Webhook。
     - 通过 Redis 防止对同一 Commit 的重复审查。
 - **灵活配置**:
     - 通过环境变量设置基础配置。
     - 提供 Web 管理面板 (`/admin`) 和 API (`/config/*`)，用于管理：
         - GitHub/GitLab 仓库/项目的 Webhook Secret 和 Access Token。
         - LLM 参数（API Key, Base URL, Model）。
-        - 通知 Webhook URL（企业微信、自定义 Webhook）。
-        - 查看 AI 审查历史记录。
+        - 通知 Webhook URL（企业微信、**自定义 Webhook**）。
+        - **查看和管理** AI 审查历史记录。
     - 使用 Redis 持久化存储配置和审查结果。
 - **通知与记录**:
-    - 将审查摘要（包含 PR/MR 链接、分支信息、审查结果概要）发送到企业微信和自定义 Webhook。
-    - 在 Redis 中存储审查结果（默认7天过期），支持通过管理面板查阅，并自动清理已关闭/合并 PR/MR 的记录。
+    - 将审查摘要（包含 PR/MR 链接、分支信息、审查结果概要）发送到**企业微信**和**自定义 Webhook**。
+    - 在 Redis 中存储 AI 审查结果（默认**7天过期**），支持通过管理面板查阅，并且当 PR/MR **关闭或合并后，其关联的审查记录和已处理 Commit 记录会自动清理**。
 - **部署**: 支持 Docker 部署或直接运行 Python 应用。
 
 ## 🚀 快速开始
@@ -41,7 +41,13 @@ docker run -d -p 8088:8088 \
   -e OPENAI_API_KEY="your-key" \
   -e OPENAI_MODEL="gpt-4o" \
   -e REDIS_HOST="your-redis-host" \
-  -e REDIS_PASSWORD="your-redis-pwd"
+  -e REDIS_PORT="6379" \
+  -e REDIS_PASSWORD="your-redis-pwd" \
+  -e REDIS_DB="0" \
+  -e REDIS_SSL_ENABLED="true" \
+  -e WECOM_BOT_WEBHOOK_URL="" \
+  -e CUSTOM_WEBHOOK_URL="" \
+  -e REVIEW_CONCURRENCY="4"
   --name ai-code-review-helper \
   dingyufei/ai-code-review-helper:latest
 ```
@@ -64,6 +70,8 @@ docker run -d -p 8088:8088 \
 -   `REDIS_PASSWORD`: (可选) Redis 密码。
 -   `REDIS_DB`: (默认: `0`) Redis 数据库编号。
 -   `REDIS_SSL_ENABLED`: (默认: `true`) 是否为 Redis 连接启用 SSL。设为 `false` 以禁用 SSL。
+-   `CUSTOM_WEBHOOK_URL`: (可选) 自定义 Webhook URL，用于发送通知。如果留空则禁用。
+-   `REVIEW_CONCURRENCY`: (默认: `4`)详细审查模式下，并行处理文件的最大并发数。
 -   (更多变量如 `SERVER_HOST`, `SERVER_PORT`, `GITHUB_API_URL`, `GITLAB_INSTANCE_URL` 等请参考启动日志或源码。)
 
 ### 2. 管理面板与 API
