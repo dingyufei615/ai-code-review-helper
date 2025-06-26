@@ -1,3 +1,14 @@
+<!-- Keep these links. Translations will automatically update with the README. -->
+[Deutsch](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=de) | 
+[English](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=en) | 
+[Español](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=es) | 
+[français](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=fr) | 
+[日本語](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=ja) | 
+[한국어](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=ko) | 
+[Português](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=pt) | 
+[Русский](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=ru) | 
+[中文](https://www.readme-i18n.com/dingyufei615/ai-code-review-helper?lang=zh)
+
 # AI Code Review Helper
 
 一个基于 LLM 的自动化代码审查助手。通过 GitHub/GitLab Webhook 监听 PR/MR 变更，调用 AI 分析代码，并将审查意见自动评论到 PR/MR，同时支持多种通知渠道。
