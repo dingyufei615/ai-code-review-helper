@@ -107,36 +107,18 @@ def codeup_webhook_general():
         logger.error(f"解析 Codeup JSON 负载时出错 (粗粒度): {e}")
         abort(400, "无效的 JSON 负载")
 
-    # 添加调试日志来查看实际的负载结构
-    logger.info(f"收到 Codeup Webhook 负载 (通用审查): {json.dumps(payload_data, indent=2, ensure_ascii=False)}")
+    # 从 Codeup Webhook 负载中获取 repository ID
+    repository_info = payload_data.get('repository', {})
+    object_attributes = payload_data.get('object_attributes', {})
 
-    # 尝试多种方式获取 repository ID
-    repository_id = None
-    repository_info = {}
-
-    # 方式1: payload_data.repository.id (类似 GitLab)
-    if 'repository' in payload_data:
-        repository_info = payload_data.get('repository', {})
-        repository_id = repository_info.get('id')
-        logger.info(f"尝试从 repository.id 获取: {repository_id}")
-
-    # 方式2: payload_data.project.id (可能的字段名)
-    if not repository_id and 'project' in payload_data:
-        project_info = payload_data.get('project', {})
-        repository_id = project_info.get('id')
-        repository_info = project_info  # 使用 project 信息
-        logger.info(f"尝试从 project.id 获取: {repository_id}")
-
-    # 方式3: 直接从顶级字段获取
-    if not repository_id:
-        repository_id = payload_data.get('repository_id') or payload_data.get('project_id')
-        logger.info(f"尝试从顶级字段获取: {repository_id}")
+    # Codeup 的 repository ID 在 object_attributes.project_id 字段中
+    repository_id = object_attributes.get('project_id')
+    logger.info(f"从 object_attributes.project_id 获取 repository ID: {repository_id}")
 
     if not repository_id:
-        logger.error(f"错误: Codeup 负载中缺少 repository ID (通用审查)。负载键: {list(payload_data.keys())}")
-        logger.error(f"repository 字段内容: {payload_data.get('repository', 'N/A')}")
-        logger.error(f"project 字段内容: {payload_data.get('project', 'N/A')}")
-        abort(400, "Codeup 负载中缺少 repository ID")
+        logger.error(f"错误: Codeup 负载中缺少 object_attributes.project_id (通用审查)。")
+        logger.error(f"object_attributes 内容: {object_attributes}")
+        abort(400, "Codeup 负载中缺少 object_attributes.project_id")
 
     repository_id_str = str(repository_id)
     config = codeup_repo_configs.get(repository_id_str)
@@ -153,20 +135,21 @@ def codeup_webhook_general():
         abort(401, "Codeup signature verification failed (general).")
 
     event_type = request.headers.get('X-Codeup-Event')
-    if event_type != "Merge Request Hook":
-        logger.info(f"Codeup (粗粒度): 忽略事件类型: {event_type}")
+    object_kind = payload_data.get('object_kind')
+    if object_kind != "merge_request":
+        logger.info(f"Codeup (通用审查): 忽略事件类型: {object_kind}")
         return "事件已忽略", 200
 
-    # 提取 MR 信息
-    mr_data = payload_data.get('merge_request', {})
+    # 提取 MR 信息 - Codeup 的 MR 数据在 object_attributes 中
+    mr_data = object_attributes
     if not mr_data:
-        logger.error("错误: Codeup 负载中缺少 merge_request 数据 (粗粒度)。")
-        abort(400, "Codeup 负载中缺少 merge_request 数据")
+        logger.error("错误: Codeup 负载中缺少 object_attributes 数据 (通用审查)。")
+        abort(400, "Codeup 负载中缺少 object_attributes 数据")
 
-    action = payload_data.get('action')
+    action = mr_data.get('action')
     mr_state = mr_data.get('state')
-    local_id = mr_data.get('iid') or mr_data.get('id')
-    head_sha_payload = mr_data.get('source_commit_id')
+    local_id = mr_data.get('local_id')  # Codeup 使用 local_id
+    head_sha_payload = mr_data.get('last_commit', {}).get('id')  # 从 last_commit 获取 commit ID
 
     if action == 'close':
         logger.info(f"Codeup (通用审查): MR {repository_id_str}#{local_id} 已关闭。正在清理已处理的 commit 记录...")
@@ -178,7 +161,7 @@ def codeup_webhook_general():
         return "MR 操作/状态已忽略", 200
 
     mr_title = mr_data.get('title', 'Unknown Title')
-    mr_url = mr_data.get('web_url', '')
+    mr_url = mr_data.get('url', '')  # Codeup 使用 url 字段
     repo_name_from_payload = repository_info.get('name', '')
 
     logger.info(f"--- 收到 Codeup Merge Request Hook (通用审查) ---")
