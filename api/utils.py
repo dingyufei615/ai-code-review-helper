@@ -138,3 +138,19 @@ def verify_gitlab_signature(req, secret):
         logger.error(f"错误: 无效的 X-Gitlab-Token。")
         return False
     return True
+
+
+def verify_codeup_signature(req, secret):
+    """验证 Codeup Webhook 签名 (使用仓库特定的 Secret)"""
+    codeup_token = req.headers.get('X-Codeup-Token')
+    if not codeup_token:
+        logger.error("错误: X-Codeup-Token 请求头缺失。")
+        return False
+    if not secret:
+        logger.error("错误: 此仓库未配置 Webhook secret。")
+        return False
+
+    if not hmac.compare_digest(codeup_token, secret):
+        logger.error(f"错误: 无效的 X-Codeup-Token。")
+        return False
+    return True

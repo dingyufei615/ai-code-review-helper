@@ -12,6 +12,7 @@
     <ul>
         <li><a href="#" id="navGithub" class="active">GitHub 配置</a></li>
         <li><a href="#" id="navGitlab">GitLab 配置</a></li>
+        <li><a href="#" id="navCodeup">Codeup 配置</a></li>
         <li><a href="#" id="navLlmSettings">LLM 配置</a></li>
         <li><a href="#" id="navNotificationSettings">通知配置</a></li>
         <li><a href="#" id="navApiKeySettings">API 密钥设置</a></li>
@@ -78,6 +79,33 @@
             </div>
         </div>
 
+        <!-- Codeup Configurations -->
+        <div id="codeupSection" class="content-section">
+            <div class="config-section">
+                <h2>Codeup 仓库配置</h2>
+                <form id="codeupConfigForm">
+                    <label for="codeupRepositoryId">仓库 ID:</label>
+                    <input type="text" id="codeupRepositoryId" required>
+
+                    <label for="codeupOrganizationId">组织 ID:</label>
+                    <input type="text" id="codeupOrganizationId" required>
+
+                    <label for="codeupSecret">Webhook Secret:</label>
+                    <input type="text" id="codeupSecret" required>
+
+                    <label for="codeupToken">Codeup Access Token:</label>
+                    <input type="text" id="codeupToken" required>
+
+                    <label for="codeupDomain">服务接入点域名:</label>
+                    <input type="text" id="codeupDomain" placeholder="例如：codeup.aliyun.com" required>
+
+                    <button type="submit">添加/更新 Codeup 配置</button>
+                </form>
+                <h3>已配置的 Codeup 仓库:</h3>
+                <ul id="codeupRepoList" class="config-list"></ul>
+            </div>
+        </div>
+
         <!-- LLM Settings Section -->
         <div id="llmSettingsSection" class="content-section">
             <div class="config-section">
@@ -138,6 +166,7 @@
 
     const navGithub = document.getElementById('navGithub');
     const navGitlab = document.getElementById('navGitlab');
+    const navCodeup = document.getElementById('navCodeup');
     const navLlmSettings = document.getElementById('navLlmSettings');
     const navNotificationSettings = document.getElementById('navNotificationSettings');
     const navApiKeySettings = document.getElementById('navApiKeySettings'); // 新增
@@ -145,6 +174,7 @@
 
     const githubSection = document.getElementById('githubSection');
     const gitlabSection = document.getElementById('gitlabSection');
+    const codeupSection = document.getElementById('codeupSection');
     const llmSettingsSection = document.getElementById('llmSettingsSection');
     const notificationSettingsSection = document.getElementById('notificationSettingsSection');
     const apiKeySettingsSection = document.getElementById('apiKeySettingsSection'); // 新增
@@ -178,6 +208,7 @@
         // Hide all sections
         githubSection.classList.remove('active');
         gitlabSection.classList.remove('active');
+        codeupSection.classList.remove('active');
         llmSettingsSection.classList.remove('active');
         notificationSettingsSection.classList.remove('active');
         apiKeySettingsSection.classList.remove('active'); // 新增
@@ -187,6 +218,7 @@
         // Deactivate all nav links
         navGithub.classList.remove('active');
         navGitlab.classList.remove('active');
+        navCodeup.classList.remove('active');
         navLlmSettings.classList.remove('active');
         navNotificationSettings.classList.remove('active');
         navApiKeySettings.classList.remove('active'); // 新增
@@ -200,6 +232,9 @@
         } else if (sectionToShow === 'gitlab') {
             gitlabSection.classList.add('active');
             navGitlab.classList.add('active');
+        } else if (sectionToShow === 'codeup') {
+            codeupSection.classList.add('active');
+            navCodeup.classList.add('active');
         } else if (sectionToShow === 'llmSettings') {
             llmSettingsSection.classList.add('active');
             navLlmSettings.classList.add('active');
@@ -224,6 +259,10 @@
     navGitlab.addEventListener('click', (e) => {
         e.preventDefault();
         showSection('gitlab');
+    });
+    navCodeup.addEventListener('click', (e) => {
+        e.preventDefault();
+        showSection('codeup');
     });
     navLlmSettings.addEventListener('click', (e) => {
         e.preventDefault();
@@ -418,6 +457,69 @@
         if (result && result.message) {
             showStatus(result.message);
             loadGitlabProjects();
+        }
+    }
+
+    // Codeup Functions
+    const codeupConfigForm = document.getElementById('codeupConfigForm');
+    const codeupRepoList = document.getElementById('codeupRepoList');
+
+    async function loadCodeupRepos() {
+        const data = await fetchData('/config/codeup/repos');
+        if (data && data.configured_codeup_repositories) {
+            codeupRepoList.innerHTML = '';
+            data.configured_codeup_repositories.forEach(repoId => {
+                const li = document.createElement('li');
+                const span = document.createElement('span');
+                span.textContent = `仓库 ID: ${repoId}`;
+                li.appendChild(span);
+
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = '删除';
+                deleteButton.className = 'delete-btn';
+                deleteButton.onclick = () => deleteCodeupRepo(repoId);
+                li.appendChild(deleteButton);
+                codeupRepoList.appendChild(li);
+            });
+        } else if (data) { // Empty list is valid
+            codeupRepoList.innerHTML = '<li>暂无已配置的 Codeup 仓库。</li>';
+        }
+    }
+
+    codeupConfigForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const repositoryId = document.getElementById('codeupRepositoryId').value;
+        const organizationId = document.getElementById('codeupOrganizationId').value;
+        const secret = document.getElementById('codeupSecret').value;
+        const token = document.getElementById('codeupToken').value;
+        const domain = document.getElementById('codeupDomain').value;
+
+        if (!repositoryId || !organizationId || !secret || !token || !domain) {
+            showStatus('Codeup 配置字段不能为空!', true);
+            return;
+        }
+
+        const result = await fetchData('/config/codeup/repo', 'POST', {
+            repository_id: repositoryId,
+            organization_id: organizationId,
+            secret: secret,
+            token: token,
+            domain: domain
+        });
+
+        if (result && result.message) {
+            showStatus(result.message);
+            codeupConfigForm.reset();
+            loadCodeupRepos();
+        }
+    });
+
+    async function deleteCodeupRepo(repositoryId) {
+        if (!confirm(`确定要删除 Codeup 仓库 ID ${repositoryId} 的配置吗?`)) return;
+        const result = await fetchData(`/config/codeup/repo/${repositoryId}`, 'DELETE');
+        if (result && result.message) {
+            showStatus(result.message);
+            loadCodeupRepos();
         }
     }
 

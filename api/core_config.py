@@ -36,6 +36,7 @@ redis_client = None
 REDIS_KEY_PREFIX = "ai_code_review_helper:"
 REDIS_GITHUB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}github_repo_configs"
 REDIS_GITLAB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}gitlab_project_configs"
+REDIS_CODEUP_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}codeup_repo_configs"
 REDIS_PROCESSED_COMMITS_SET_KEY = f"{REDIS_KEY_PREFIX}processed_commits_set"
 REDIS_REVIEW_RESULTS_KEY_PREFIX = f"{REDIS_KEY_PREFIX}review_results:"
 
@@ -75,8 +76,8 @@ def init_redis_client():
 
 def load_configs_from_redis():
     """如果 Redis 可用，则从 Redis 加载配置到内存中。"""
-    global github_repo_configs, gitlab_project_configs
-    global github_repo_configs, gitlab_project_configs # 确保修改的是全局变量
+    global github_repo_configs, gitlab_project_configs, codeup_repo_configs
+    global github_repo_configs, gitlab_project_configs, codeup_repo_configs # 确保修改的是全局变量
     if redis_client:
         try:
             # 加载 GitHub 配置
@@ -102,6 +103,18 @@ def load_configs_from_redis():
                     logger.error(f"解码/解析 GitLab 配置时出错，键: {key_raw}: {e}")
             if gitlab_data_raw:
                 logger.info(f"从 Redis 加载了 {len(gitlab_project_configs)} 个 GitLab 配置。")
+
+            # 加载 Codeup 配置
+            codeup_data_raw = redis_client.hgetall(REDIS_CODEUP_CONFIGS_KEY)
+            for key_raw, value_raw in codeup_data_raw.items():
+                try:
+                    key = key_raw.decode('utf-8')
+                    value_str = value_raw.decode('utf-8')
+                    codeup_repo_configs[key] = json.loads(value_str)
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.error(f"解码/解析 Codeup 配置时出错，键: {key_raw}: {e}")
+            if codeup_data_raw:
+                logger.info(f"从 Redis 加载了 {len(codeup_repo_configs)} 个 Codeup 配置。")
         except redis.exceptions.RedisError as e:
             logger.error(f"从 Redis 加载配置时 Redis 出错: {e}。内存中的配置可能不完整。")
         except Exception as e:
@@ -207,7 +220,7 @@ def _get_review_results_redis_key(vcs_type: str, identifier: str, pr_mr_id: str)
     return f"{REDIS_REVIEW_RESULTS_KEY_PREFIX}{vcs_type}:{identifier}:{str(pr_mr_id)}"
 
 
-def save_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str, review_json_string: str, project_name: str = None):
+def save_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha: str, review_json_string: str, project_name: str = None, repo_name: str = None):
     """将 AI 审查结果保存到 Redis。"""
     # global redis_client # redis_client is already global
     if not redis_client:
@@ -226,14 +239,18 @@ def save_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sh
             # 仅在首次或需要更新时设置项目名称
             # 如果 _project_name 已存在且不同，可以选择是否覆盖，这里简单覆盖
             pipe.hset(redis_key, "_project_name", project_name)
-        
+        if vcs_type.startswith('codeup') and repo_name: # 确保 'codeup' 和 'codeup_general' 都能保存仓库名
+            pipe.hset(redis_key, "_repo_name", repo_name)
+
         # 为审查结果设置过期时间，例如7天，以避免无限增长
         pipe.expire(redis_key, 60 * 60 * 24 * 7) # 7 days
         pipe.execute()
-        
+
         log_msg = f"成功将 {vcs_type} {identifier} #{pr_mr_id} (commit: {commit_sha}) 的审查结果保存到 Redis。"
-        if vcs_type == 'gitlab' and project_name:
+        if vcs_type.startswith('gitlab') and project_name:
             log_msg += f" 项目名称: {project_name}。"
+        if vcs_type.startswith('codeup') and repo_name:
+            log_msg += f" 仓库名称: {repo_name}。"
         logger.info(log_msg)
     except redis.exceptions.RedisError as e:
         logger.error(f"保存 AI 审查结果到 Redis 时出错 (Key: {redis_key}, Commit: {commit_sha}): {e}")
@@ -257,21 +274,26 @@ def get_review_results(vcs_type: str, identifier: str, pr_mr_id: str, commit_sha
             all_results_bytes = redis_client.hgetall(redis_key)
             decoded_results = {}
             project_name_for_pr_mr = None
+            repo_name_for_pr_mr = None
             for field_bytes, value_bytes in all_results_bytes.items():
                 field_str = field_bytes.decode('utf-8')
                 try:
                     if field_str == "_project_name":
                         project_name_for_pr_mr = value_bytes.decode('utf-8')
+                    elif field_str == "_repo_name":
+                        repo_name_for_pr_mr = value_bytes.decode('utf-8')
                     else: # 这是一个 commit sha
                         decoded_results[field_str] = json.loads(value_bytes.decode('utf-8'))
                 except (UnicodeDecodeError, json.JSONDecodeError) as e:
                     logger.error(f"解码/解析 Redis 中的审查结果时出错 (Key: {redis_key}, Field: {field_str}): {e}")
-            
-            # 将项目名称（如果存在）添加到返回结果中，但不作为 commit 结果的一部分
+
+            # 将项目名称/仓库名称（如果存在）添加到返回结果中，但不作为 commit 结果的一部分
             # API 端点将决定如何使用它
             final_result = {"commits": decoded_results}
             if project_name_for_pr_mr:
                 final_result["project_name"] = project_name_for_pr_mr
+            if repo_name_for_pr_mr:
+                final_result["repo_name"] = repo_name_for_pr_mr
             return final_result
     except redis.exceptions.RedisError as e:
         logger.error(f"从 Redis 获取 AI 审查结果时出错 (Key: {redis_key}): {e}")
@@ -324,16 +346,32 @@ def get_all_reviewed_prs_mrs_keys():
                                 logger.debug(f"未在 Key '{key}' 中找到 GitLab 项目名称 (VCS Type: {vcs_type_full})，将使用 ID '{identifier_str}'。")
                         except Exception as e_proj_name:
                             logger.error(f"从 Redis Key '{key}' (VCS Type: {vcs_type_full}) 获取项目名称时出错: {e_proj_name}")
-                    
+
+                    # 统一处理 Codeup 仓库名称获取
+                    if vcs_type_full.startswith('codeup'):
+                        try:
+                            repo_name_bytes = redis_client.hget(key, "_repo_name")
+                            if repo_name_bytes:
+                                display_identifier = repo_name_bytes.decode('utf-8')
+                                logger.debug(f"找到 Codeup 仓库名称 '{display_identifier}' 用于 Key '{key}' (VCS Type: {vcs_type_full})")
+                            else:
+                                logger.debug(f"未在 Key '{key}' 中找到 Codeup 仓库名称 (VCS Type: {vcs_type_full})，将使用 ID '{identifier_str}'。")
+                        except Exception as e_repo_name:
+                            logger.error(f"从 Redis Key '{key}' (VCS Type: {vcs_type_full}) 获取仓库名称时出错: {e_repo_name}")
+
                     # 规范化显示名称中的类型
                     if vcs_type_full == "github_general":
                         display_vcs_type_prefix = "GITHUB (General)"
                     elif vcs_type_full == "gitlab_general":
                         display_vcs_type_prefix = "GITLAB (General)"
+                    elif vcs_type_full == "codeup_general":
+                        display_vcs_type_prefix = "CODEUP (General)"
                     elif vcs_type_full == "github":
                          display_vcs_type_prefix = "GITHUB (Detailed)"
                     elif vcs_type_full == "gitlab":
                          display_vcs_type_prefix = "GITLAB (Detailed)"
+                    elif vcs_type_full == "codeup":
+                         display_vcs_type_prefix = "CODEUP (Detailed)"
 
 
                     identifiers.append({
@@ -377,4 +415,8 @@ github_repo_configs = {}
 # GitLab 项目配置
 # key: project_id (string), value: {"secret": "webhook_secret", "token": "gitlab_access_token", "instance_url": "custom_instance_url"}
 gitlab_project_configs = {}
+
+# Codeup 仓库配置
+# key: repository_id (string), value: {"secret": "webhook_secret", "token": "codeup_access_token", "organization_id": "org_id", "domain": "service_domain"}
+codeup_repo_configs = {}
 # --- ---

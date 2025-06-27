@@ -7,8 +7,8 @@ import json
 import logging 
 from api.app_factory import app
 from api.core_config import (
-    app_configs, github_repo_configs, gitlab_project_configs,
-    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY,
+    app_configs, github_repo_configs, gitlab_project_configs, codeup_repo_configs,
+    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY, REDIS_CODEUP_CONFIGS_KEY,
     get_all_reviewed_prs_mrs_keys, get_review_results, delete_review_results_for_pr_mr # 新增导入
 )
 import api.core_config as core_config_module  # 访问 redis_client 的推荐方式
@@ -125,6 +125,66 @@ def list_gitlab_project_configs():
     return jsonify({"configured_gitlab_projects": list(gitlab_project_configs.keys())}), 200
 
 
+# Codeup Configuration Management
+@app.route('/config/codeup/repo', methods=['POST'])
+@require_admin_key
+def add_or_update_codeup_repo_config():
+    if not request.is_json: return jsonify({"error": "Request must be JSON"}), 400
+    data = request.get_json()
+    repository_id = data.get('repository_id')
+    organization_id = data.get('organization_id')
+    secret = data.get('secret')
+    token = data.get('token')
+    domain = data.get('domain')  # 服务接入点域名
+
+    if not repository_id or not organization_id or not secret or not token or not domain:
+        return jsonify({"error": "Missing required fields: repository_id, organization_id, secret, token, domain"}), 400
+
+    repository_id_str = str(repository_id)
+    config_data = {
+        "secret": secret,
+        "token": token,
+        "organization_id": organization_id,
+        "domain": domain
+    }
+
+    codeup_repo_configs[repository_id_str] = config_data
+    if core_config_module.redis_client:
+        try:
+            core_config_module.redis_client.hset(REDIS_CODEUP_CONFIGS_KEY, repository_id_str, json.dumps(config_data))
+            logger.info(f"Codeup 配置 {repository_id_str} 已保存到 Redis。")
+        except Exception as e:
+            logger.error(f"保存 Codeup 配置 {repository_id_str} 到 Redis 时出错: {e}")
+            # 继续执行，至少内存中已更新
+
+    logger.info(f"为仓库 ID 添加/更新了 Codeup 配置: {repository_id_str}。组织 ID: {organization_id}, 域名: {domain}")
+    return jsonify({"message": f"Configuration for Codeup repository {repository_id_str} added/updated."}), 200
+
+
+@app.route('/config/codeup/repo/<string:repository_id>', methods=['DELETE'])
+@require_admin_key
+def delete_codeup_repo_config(repository_id):
+    repository_id_str = str(repository_id)
+    if repository_id_str in codeup_repo_configs:
+        del codeup_repo_configs[repository_id_str]
+        if core_config_module.redis_client:
+            try:
+                core_config_module.redis_client.hdel(REDIS_CODEUP_CONFIGS_KEY, repository_id_str)
+                logger.info(f"Codeup 配置 {repository_id_str} 已从 Redis 删除。")
+            except Exception as e:
+                logger.error(f"从 Redis 删除 Codeup 配置 {repository_id_str} 时出错: {e}")
+                # 继续执行，至少内存中已删除
+        logger.info(f"为仓库 ID 删除了 Codeup 配置: {repository_id_str}")
+        return jsonify({"message": f"Configuration for Codeup repository {repository_id_str} deleted."}), 200
+    return jsonify({"error": f"Configuration for Codeup repository {repository_id_str} not found."}), 404
+
+
+@app.route('/config/codeup/repos', methods=['GET'])
+@require_admin_key
+def list_codeup_repo_configs():
+    return jsonify({"configured_codeup_repositories": list(codeup_repo_configs.keys())}), 200
+
+
 # --- Global Application Configuration Management ---
 @app.route('/config/global_settings', methods=['GET'])
 @require_admin_key
@@ -186,7 +246,7 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
     commit_sha = request.args.get('commit_sha', None)
 
     # 允许的 vcs_type 包括详细审查和通用审查
-    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general']
+    allowed_vcs_types = ['github', 'gitlab', 'codeup', 'github_general', 'gitlab_general', 'codeup_general']
     if vcs_type not in allowed_vcs_types:
         return jsonify({"error": f"无效的 VCS 类型。支持的类型: {', '.join(allowed_vcs_types)}。"}), 400
 
@@ -218,12 +278,13 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
     if commit_sha: # 请求特定 commit 的结果
         # results 在这里不为 None，意味着找到了该 commit 的数据
         return jsonify({"commit_sha": commit_sha, "review_data": results}), 200
-    else: # 请求 PR/MR 的所有 commits 的结果 (results 是一个字典，可能包含 "commits" 和 "project_name")
+    else: # 请求 PR/MR 的所有 commits 的结果 (results 是一个字典，可能包含 "commits", "project_name", "repo_name")
         all_commits_reviews = results.get("commits", {})
         project_name = results.get("project_name")
+        repo_name = results.get("repo_name")
 
-        if not all_commits_reviews and not project_name:
-             # 如果 "commits" 和 "project_name" 都不存在，且 results 不是 None (例如是 {})
+        if not all_commits_reviews and not project_name and not repo_name:
+             # 如果 "commits", "project_name", "repo_name" 都不存在，且 results 不是 None (例如是 {})
              # 这意味着 PR/MR 的 Redis key 可能存在，但里面是空的，或者 get_review_results 返回了空字典表示未找到
             logger.info(f"未找到 {vcs_type}/{identifier}#{pr_mr_id} 的任何审查结果，或结果为空。")
             # 返回空数据而不是404，因为父记录可能存在但无内容
@@ -232,9 +293,12 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
                 "all_reviews_by_commit": {},
                 "display_identifier": identifier # 默认显示标识符
             }
-            if vcs_type == 'gitlab' and project_name: # 即使 all_commits_reviews 为空，也可能想显示项目名
+            if vcs_type.startswith('gitlab') and project_name: # 即使 all_commits_reviews 为空，也可能想显示项目名
                 response_data["project_name"] = project_name
                 response_data["display_identifier"] = project_name
+            elif vcs_type.startswith('codeup') and repo_name: # 即使 all_commits_reviews 为空，也可能想显示仓库名
+                response_data["repo_name"] = repo_name
+                response_data["display_identifier"] = repo_name
             return jsonify(response_data), 200
 
         response_data = {
@@ -243,9 +307,13 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
         }
         if project_name:
             response_data["project_name"] = project_name
-        
-        if vcs_type == 'gitlab' and project_name:
+        if repo_name:
+            response_data["repo_name"] = repo_name
+
+        if vcs_type.startswith('gitlab') and project_name:
             response_data["display_identifier"] = project_name
+        elif vcs_type.startswith('codeup') and repo_name:
+            response_data["display_identifier"] = repo_name
         else:
             response_data["display_identifier"] = identifier
 
@@ -259,7 +327,7 @@ def delete_specific_review_results_for_pr_mr(vcs_type, identifier, pr_mr_id):
     删除特定 PR/MR 的所有 AI 审查结果。
     """
     # 允许的 vcs_type 包括详细审查和通用审查
-    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general']
+    allowed_vcs_types = ['github', 'gitlab', 'codeup', 'github_general', 'gitlab_general', 'codeup_general']
     if vcs_type not in allowed_vcs_types:
         return jsonify({"error": f"无效的 VCS 类型。支持的类型: {', '.join(allowed_vcs_types)}。"}), 400
 

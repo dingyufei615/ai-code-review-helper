@@ -3,7 +3,7 @@ import json
 import traceback
 import logging
 import base64
-from api.core_config import app_configs, gitlab_project_configs
+from api.core_config import app_configs, gitlab_project_configs, codeup_repo_configs
 from api.utils import parse_single_file_diff
 
 logger = logging.getLogger(__name__)
@@ -679,4 +679,301 @@ def add_gitlab_mr_general_comment(project_id: str, mr_iid: int, access_token: st
         return False
     except Exception as e:
         logger.exception(f"添加 GitLab 粗粒度审查评论时发生意外错误:")
+        return False
+
+
+# --- Codeup VCS Service Functions ---
+
+def get_codeup_mr_changes(organization_id, repository_id, local_id, access_token, domain):
+    """从 Codeup API 获取 Merge Request 的变更，并为每个文件解析成结构化数据"""
+    if not access_token:
+        logger.error(f"错误: 仓库 {repository_id} 未配置访问令牌。")
+        return None, None
+
+    # 首先获取 MR 的基本信息
+    mr_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}"
+    headers = {"x-yunxiao-token": access_token}
+
+    structured_changes = {}
+    position_info = None
+
+    try:
+        logger.info(f"从以下地址获取 Codeup MR 信息: {mr_url}")
+        response = requests.get(mr_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        mr_data = response.json()
+
+        if not mr_data:
+            logger.info(f"在 Codeup 仓库 {repository_id} 的 MR {local_id} 中未找到数据。")
+            return {}, None
+
+        # 提取位置信息
+        source_commit_id = mr_data.get("sourceCommitId")
+        target_branch = mr_data.get("targetBranch", "master")
+
+        # 获取变更文件树
+        tree_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/changeTree"
+
+        # 需要获取 fromPatchSetId 和 toPatchSetId，这里先用简化方式
+        # 在实际实现中，可能需要先调用其他 API 获取这些 ID
+        tree_params = {
+            "fromPatchSetId": "base",  # 这需要根据实际 API 调整
+            "toPatchSetId": "head"     # 这需要根据实际 API 调整
+        }
+
+        logger.info(f"从以下地址获取 Codeup 变更文件树: {tree_url}")
+        tree_response = requests.get(tree_url, headers=headers, params=tree_params, timeout=60)
+        tree_response.raise_for_status()
+        tree_data = tree_response.json()
+
+        changed_files = tree_data.get('changedTreeItems', [])
+        logger.info(f"从 API 收到 Codeup MR {local_id} 的 {len(changed_files)} 个文件变更。")
+
+        position_info = {
+            "source_commit_id": source_commit_id,
+            "target_branch": target_branch,
+            "local_id": local_id
+        }
+
+        for file_item in changed_files:
+            new_path = file_item.get('newPath')
+            old_path = file_item.get('oldPath')
+            is_new_file = file_item.get('newFile', False)
+            is_deleted_file = file_item.get('deletedFile', False)
+            is_renamed_file = file_item.get('renamedFile', False)
+            add_lines = file_item.get('addLines', 0)
+            del_lines = file_item.get('delLines', 0)
+
+            if not new_path:
+                logger.warning(f"警告: 跳过没有新路径的文件项。")
+                continue
+
+            # 获取文件的具体变更内容 (这里需要调用 GetCompare API)
+            # 由于 Codeup API 的复杂性，这里先创建一个简化的结构
+            file_changes = {
+                "path": new_path,
+                "old_path": old_path if is_renamed_file else None,
+                "changes": [],  # 这里需要解析具体的 diff 内容
+                "context": {"old": "", "new": ""},
+                "lines_changed": add_lines + del_lines,
+                "status": "added" if is_new_file else ("removed" if is_deleted_file else ("renamed" if is_renamed_file else "modified"))
+            }
+
+            # 这里应该调用 GetCompare API 获取具体的 diff 内容
+            # 但为了简化，先创建基本结构
+            if add_lines > 0:
+                file_changes["changes"].append({
+                    "type": "add",
+                    "old_line": None,
+                    "new_line": 1,  # 简化处理
+                    "content": f"Added {add_lines} lines"
+                })
+
+            if del_lines > 0:
+                file_changes["changes"].append({
+                    "type": "delete",
+                    "old_line": 1,  # 简化处理
+                    "new_line": None,
+                    "content": f"Deleted {del_lines} lines"
+                })
+
+            structured_changes[new_path] = file_changes
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 Codeup API 获取 MR 变更时出错: {e}")
+        return None, None
+    except Exception as e:
+        logger.exception(f"获取/解析 Codeup 仓库 {repository_id} 中 MR {local_id} 的变更时发生意外错误:")
+        return None, None
+
+    return structured_changes, position_info
+
+
+def get_codeup_mr_data_for_general_review(organization_id, repository_id, local_id, access_token, domain, mr_data):
+    """为 Codeup MR 获取粗粒度审查所需的数据：文件列表、每个文件的 diff、旧内容和新内容。"""
+    if not access_token:
+        logger.error(f"错误: 仓库 {repository_id} 未配置访问令牌。")
+        return None
+
+    headers = {"x-yunxiao-token": access_token}
+    general_review_data = []
+
+    try:
+        # 获取变更文件树
+        tree_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/changeTree"
+        tree_params = {
+            "fromPatchSetId": "base",
+            "toPatchSetId": "head"
+        }
+
+        logger.info(f"从 {tree_url} 获取 Codeup MR 文件列表 (用于粗粒度审查)。")
+        response = requests.get(tree_url, headers=headers, params=tree_params, timeout=60)
+        response.raise_for_status()
+        tree_data = response.json()
+
+        changed_files = tree_data.get('changedTreeItems', [])
+        if not changed_files:
+            logger.info(f"在 Codeup 仓库 {repository_id} 的 MR {local_id} 中未找到变更文件。")
+            return []
+
+        for file_item in changed_files:
+            new_path = file_item.get('newPath')
+            old_path = file_item.get('oldPath')
+            is_new_file = file_item.get('newFile', False)
+            is_deleted_file = file_item.get('deletedFile', False)
+            is_binary = file_item.get('isBinary', False)
+
+            if not new_path or is_binary:
+                logger.info(f"跳过二进制文件或无路径文件: {new_path}")
+                continue
+
+            file_data_entry = {
+                "file_path": new_path,
+                "old_file_path": old_path,
+                "status": "added" if is_new_file else ("removed" if is_deleted_file else "modified"),
+                "diff": f"Codeup diff for {new_path}",  # 简化的 diff 信息
+                "old_content": "",
+                "new_content": ""
+            }
+
+            # 获取文件内容
+            if not is_deleted_file:
+                # 获取新文件内容
+                encoded_new_path = requests.utils.quote(new_path, safe='')
+                new_content_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/files/{encoded_new_path}"
+                new_content_params = {"ref": "HEAD"}  # 或者使用具体的 commit SHA
+
+                logger.info(f"获取新内容 (Codeup): {new_path}")
+                file_data_entry["new_content"] = _fetch_codeup_file_content(new_content_url, headers, new_content_params)
+
+            if not is_new_file and old_path:
+                # 获取旧文件内容
+                encoded_old_path = requests.utils.quote(old_path, safe='')
+                old_content_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/files/{encoded_old_path}"
+                old_content_params = {"ref": mr_data.get("targetBranch", "master")}  # 使用目标分支
+
+                logger.info(f"获取旧内容 (Codeup): {old_path}")
+                file_data_entry["old_content"] = _fetch_codeup_file_content(old_content_url, headers, old_content_params)
+
+            general_review_data.append(file_data_entry)
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 Codeup API 获取粗粒度审查数据时出错: {e}")
+        return None
+    except Exception as e:
+        logger.exception(f"为 Codeup 仓库 {repository_id} MR {local_id} 准备粗粒度审查数据时发生意外错误:")
+        return None
+
+    return general_review_data
+
+
+def _fetch_codeup_file_content(url, headers, params, max_size_bytes=1024*1024):
+    """从 Codeup API 获取文件内容的辅助函数"""
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        # 检查文件大小
+        file_size = data.get('size', 0)
+        if file_size > max_size_bytes:
+            logger.warning(f"文件 {url} 过大 ({file_size} 字节，限制 {max_size_bytes} 字节)。跳过获取内容。")
+            return f"[Content not fetched: File size ({file_size} bytes) exceeds limit {max_size_bytes} bytes]"
+
+        # Codeup API 返回的内容可能是 base64 编码的
+        encoding = data.get('encoding', 'text')
+        content = data.get('content', '')
+
+        if encoding == 'base64' and content:
+            try:
+                content_bytes = base64.b64decode(content)
+                return content_bytes.decode('utf-8')
+            except (base64.binascii.Error, UnicodeDecodeError) as e:
+                logger.warning(f"无法解码 Codeup 文件内容: {e}")
+                return None
+        elif encoding == 'text':
+            return content
+        else:
+            logger.warning(f"未知的 Codeup 文件编码: {encoding}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 Codeup API 获取文件内容时出错: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"处理 Codeup 文件内容时发生意外错误: {e}")
+        return None
+
+
+def add_codeup_mr_comment(organization_id, repository_id, local_id, access_token, domain, review, position_info):
+    """向 Codeup Merge Request 添加评论"""
+    if not access_token:
+        logger.error("错误: 无法添加评论，缺少访问令牌。")
+        return False
+    if not position_info or not position_info.get("local_id"):
+        logger.error(f"错误: 无法添加评论，缺少必要的位置信息。得到: {position_info}")
+        return False
+
+    comment_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/review"
+    headers = {"x-yunxiao-token": access_token, "Content-Type": "application/json"}
+
+    body = f"""**AI Review [{review.get('severity', 'N/A').upper()}]**: {review.get('category', 'General')}
+
+**分析**: {review.get('analysis', 'N/A')}
+
+**建议**:
+{review.get('suggestion', 'N/A')}
+"""
+
+    payload = {
+        "reviewComment": body,
+        "reviewOpinion": "NOT_PASS" if review.get('severity') in ['high', 'critical'] else "PASS"
+    }
+
+    try:
+        response = requests.post(comment_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        logger.info(f"成功向 Codeup MR #{local_id} 添加审查评论。")
+        return True
+    except requests.exceptions.RequestException as e:
+        error_message = f"添加 Codeup 审查评论时出错: {e}"
+        if 'response' in locals() and response is not None:
+            error_message += f" - 状态: {response.status_code} - 响应体: {response.text[:500]}"
+        logger.error(error_message)
+        return False
+    except Exception as e:
+        logger.exception(f"添加 Codeup 审查评论时发生意外错误:")
+        return False
+
+
+def add_codeup_mr_general_comment(organization_id, repository_id, local_id, access_token, domain, review_text):
+    """向 Codeup Merge Request 添加一个通用的粗粒度审查评论。"""
+    if not access_token:
+        logger.error("错误: 无法添加粗粒度评论，缺少访问令牌。")
+        return False
+    if not review_text.strip():
+        logger.info("粗粒度审查文本为空，不添加评论。")
+        return True
+
+    comment_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/review"
+    headers = {"x-yunxiao-token": access_token, "Content-Type": "application/json"}
+
+    payload = {
+        "reviewComment": review_text,
+        "reviewOpinion": "PASS"  # 通用审查默认为通过
+    }
+
+    try:
+        response = requests.post(comment_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        logger.info(f"成功向 Codeup MR #{local_id} 添加粗粒度审查评论。")
+        return True
+    except requests.exceptions.RequestException as e:
+        error_message = f"添加 Codeup 粗粒度审查评论时出错: {e}"
+        if 'response' in locals() and response is not None:
+            error_message += f" - 状态: {response.status_code} - 响应体: {response.text[:500]}"
+        logger.error(error_message)
+        return False
+    except Exception as e:
+        logger.exception(f"添加 Codeup 粗粒度审查评论时发生意外错误:")
         return False

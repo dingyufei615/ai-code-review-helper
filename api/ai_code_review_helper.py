@@ -16,6 +16,8 @@ import api.services.llm_service as llm_service_module
 import api.routes.config_routes
 import api.routes.webhook_routes_detailed # Changed
 import api.routes.webhook_routes_general # Changed
+import api.routes.webhook_routes_codeup_detailed # Codeup detailed review
+import api.routes.webhook_routes_codeup_general # Codeup general review
 
 
 # --- Admin Page ---
@@ -128,11 +130,24 @@ if __name__ == '__main__':
     logger.info(
         f"  列表: curl -X GET -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" http://localhost:{SERVER_PORT}/config/gitlab/projects")
 
+    logger.info("Codeup 仓库配置示例 (通过管理面板或 API):")
+    logger.info(
+        f"  添加/更新: curl -X POST -H \"Content-Type: application/json\" -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" \\")
+    logger.info(
+        f"    -d '{{\"repository_id\": \"123\", \"organization_id\": \"456\", \"secret\": \"YOUR_CODEUP_WEBHOOK_SECRET\", \"token\": \"YOUR_CODEUP_TOKEN\", \"domain\": \"codeup.aliyun.com\"}}' \\")
+    logger.info(f"    http://localhost:{SERVER_PORT}/config/codeup/repo")
+    logger.info(
+        f"  删除: curl -X DELETE -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" http://localhost:{SERVER_PORT}/config/codeup/repo/123")
+    logger.info(
+        f"  列表: curl -X GET -H \"X-Admin-API-Key: YOUR_ADMIN_KEY\" http://localhost:{SERVER_PORT}/config/codeup/repos")
+
     logger.info("--- Webhook 端点 ---")
     logger.info(f"GitHub Webhook URL (详细审查): http://localhost:{SERVER_PORT}/github_webhook")
     logger.info(f"GitLab Webhook URL (详细审查): http://localhost:{SERVER_PORT}/gitlab_webhook")
+    logger.info(f"Codeup Webhook URL (详细审查): http://localhost:{SERVER_PORT}/codeup_webhook")
     logger.info(f"GitHub Webhook URL (通用审查): http://localhost:{SERVER_PORT}/github_webhook_general")
     logger.info(f"GitLab Webhook URL (通用审查): http://localhost:{SERVER_PORT}/gitlab_webhook_general")
+    logger.info(f"Codeup Webhook URL (通用审查): http://localhost:{SERVER_PORT}/codeup_webhook_general")
     logger.info("--- ---")
 
     # 注册 atexit 处理函数以关闭 ThreadPoolExecutor
