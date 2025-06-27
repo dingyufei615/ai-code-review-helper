@@ -54,11 +54,26 @@ def _process_codeup_detailed_payload(access_token, organization_id, repository_i
         return
 
     logger.info(f"Codeup (详细审查): 正在对 {len(structured_changes)} 个文件进行 LLM 审查...")
-    all_reviews = get_openai_code_review(structured_changes)
+    all_reviews_json = get_openai_code_review(structured_changes)
 
-    if all_reviews is None:
+    if all_reviews_json is None:
         logger.warning("Codeup (详细审查): LLM 审查失败。中止。")
         return
+
+    # 解析 JSON 字符串为 Python 列表
+    try:
+        if isinstance(all_reviews_json, str):
+            all_reviews = json.loads(all_reviews_json)
+        else:
+            all_reviews = all_reviews_json
+
+        if not isinstance(all_reviews, list):
+            logger.warning(f"Codeup (详细审查): LLM 审查结果格式异常，期望列表但得到: {type(all_reviews)}")
+            all_reviews = []
+    except json.JSONDecodeError as e:
+        logger.error(f"Codeup (详细审查): 解析 LLM 审查结果 JSON 失败: {e}")
+        logger.error(f"原始数据: {all_reviews_json}")
+        all_reviews = []
 
     logger.info(f"Codeup (详细审查): LLM 审查完成，共生成 {len(all_reviews)} 条审查意见。")
 
@@ -71,11 +86,19 @@ def _process_codeup_detailed_payload(access_token, organization_id, repository_i
 
     # 添加评论到 MR
     successful_comments = 0
-    for review in all_reviews:
-        if add_codeup_mr_comment(organization_id, repository_id, local_id, access_token, domain, review, position_info):
-            successful_comments += 1
-        else:
-            logger.warning(f"Codeup (详细审查): 添加评论失败，文件: {review.get('file', 'Unknown')}")
+    for i, review in enumerate(all_reviews):
+        try:
+            logger.debug(f"Codeup (详细审查): 处理第 {i+1} 条审查意见: {type(review)}")
+            if add_codeup_mr_comment(organization_id, repository_id, local_id, access_token, domain, review, position_info):
+                successful_comments += 1
+            else:
+                # 处理 review 可能是字符串或字典的情况
+                file_info = review.get('file', 'Unknown') if isinstance(review, dict) else 'Unknown'
+                logger.warning(f"Codeup (详细审查): 添加评论失败，文件: {file_info}")
+        except Exception as e:
+            file_info = review.get('file', 'Unknown') if isinstance(review, dict) else 'Unknown'
+            logger.error(f"Codeup (详细审查): 处理审查意见时发生异常，文件: {file_info}, 错误: {e}")
+            logger.error(f"审查意见内容: {review}")
 
     logger.info(f"Codeup (详细审查): 成功添加了 {successful_comments}/{len(all_reviews)} 条评论。")
 

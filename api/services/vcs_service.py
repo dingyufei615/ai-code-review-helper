@@ -889,21 +889,29 @@ def get_codeup_mr_data_for_general_review(organization_id, repository_id, local_
 
             # 获取文件内容
             if not is_deleted_file:
-                # 获取新文件内容
-                encoded_new_path = requests.utils.quote(new_path, safe='')
-                new_content_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/files/{encoded_new_path}"
-                new_content_params = {"ref": "HEAD"}  # 或者使用具体的 commit SHA
+                # 获取新文件内容 - 使用正确的 GetFileBlobs API 路径
+                new_content_url = f"https://{domain}/api/v4/projects/{repository_id}/repository/files/blobs"
+                new_content_params = {
+                    "organizationId": organization_id,
+                    "filePath": new_path,
+                    "ref": "HEAD"  # 或者使用具体的 commit SHA
+                }
 
                 logger.info(f"获取新内容 (Codeup): {new_path}")
+                logger.debug(f"请求URL: {new_content_url}, 参数: {new_content_params}")
                 file_data_entry["new_content"] = _fetch_codeup_file_content(new_content_url, headers, new_content_params)
 
             if not is_new_file and old_path:
-                # 获取旧文件内容
-                encoded_old_path = requests.utils.quote(old_path, safe='')
-                old_content_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/files/{encoded_old_path}"
-                old_content_params = {"ref": mr_data.get("targetBranch", "master")}  # 使用目标分支
+                # 获取旧文件内容 - 使用正确的 GetFileBlobs API 路径
+                old_content_url = f"https://{domain}/api/v4/projects/{repository_id}/repository/files/blobs"
+                old_content_params = {
+                    "organizationId": organization_id,
+                    "filePath": old_path,
+                    "ref": mr_data.get("targetBranch", "master")  # 使用目标分支
+                }
 
                 logger.info(f"获取旧内容 (Codeup): {old_path}")
+                logger.debug(f"请求URL: {old_content_url}, 参数: {old_content_params}")
                 file_data_entry["old_content"] = _fetch_codeup_file_content(old_content_url, headers, old_content_params)
 
             general_review_data.append(file_data_entry)
@@ -921,38 +929,70 @@ def get_codeup_mr_data_for_general_review(organization_id, repository_id, local_
 def _fetch_codeup_file_content(url, headers, params, max_size_bytes=1024*1024):
     """从 Codeup API 获取文件内容的辅助函数"""
     try:
+        logger.debug(f"请求 Codeup 文件内容: URL={url}, 参数={params}")
         response = requests.get(url, headers=headers, params=params, timeout=30)
+
+        logger.debug(f"Codeup API 响应状态: {response.status_code}")
+        if response.status_code != 200:
+            logger.error(f"Codeup API 返回错误状态: {response.status_code}, 响应: {response.text[:500]}")
+
         response.raise_for_status()
         data = response.json()
 
+        logger.debug(f"Codeup API 响应数据结构: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+
+        # 检查是否有错误信息
+        if not data.get('success', True):
+            error_msg = data.get('errorMessage', 'Unknown error')
+            logger.error(f"Codeup API 返回错误: {error_msg}")
+            return None
+
+        # 获取结果数据
+        result = data.get('result', data)  # 有些API在result字段中返回数据
+
         # 检查文件大小
-        file_size = data.get('size', 0)
+        file_size = result.get('size', 0)
         if file_size > max_size_bytes:
-            logger.warning(f"文件 {url} 过大 ({file_size} 字节，限制 {max_size_bytes} 字节)。跳过获取内容。")
+            logger.warning(f"文件过大 ({file_size} 字节，限制 {max_size_bytes} 字节)。跳过获取内容。")
             return f"[Content not fetched: File size ({file_size} bytes) exceeds limit {max_size_bytes} bytes]"
 
         # Codeup API 返回的内容可能是 base64 编码的
-        encoding = data.get('encoding', 'text')
-        content = data.get('content', '')
+        content = result.get('content', '')
+        if not content:
+            logger.warning(f"Codeup API 返回空内容，文件路径: {params.get('filePath', 'Unknown')}")
+            return ""
 
-        if encoding == 'base64' and content:
-            try:
-                content_bytes = base64.b64decode(content)
-                return content_bytes.decode('utf-8')
-            except (base64.binascii.Error, UnicodeDecodeError) as e:
-                logger.warning(f"无法解码 Codeup 文件内容: {e}")
-                return None
-        elif encoding == 'text':
+        # 根据 GetFileBlobs API 文档，内容通常是直接返回的文本
+        # 但也可能是 base64 编码，需要检查
+        try:
+            # 尝试作为 base64 解码
+            if content and len(content) % 4 == 0:  # base64 长度应该是4的倍数
+                try:
+                    content_bytes = base64.b64decode(content, validate=True)
+                    decoded_content = content_bytes.decode('utf-8')
+                    logger.debug(f"成功解码 base64 内容，长度: {len(decoded_content)}")
+                    return decoded_content
+                except (base64.binascii.Error, UnicodeDecodeError):
+                    # 不是有效的 base64，直接返回原始内容
+                    pass
+
+            # 直接返回文本内容
+            logger.debug(f"返回文本内容，长度: {len(content)}")
             return content
-        else:
-            logger.warning(f"未知的 Codeup 文件编码: {encoding}")
-            return None
+
+        except Exception as decode_e:
+            logger.warning(f"解码文件内容时出错: {decode_e}")
+            return content  # 返回原始内容
 
     except requests.exceptions.RequestException as e:
         logger.error(f"从 Codeup API 获取文件内容时出错: {e}")
+        if 'response' in locals():
+            logger.error(f"响应状态: {response.status_code if response else 'N/A'}")
+            logger.error(f"响应内容: {response.text[:500] if response else 'N/A'}")
         return None
     except Exception as e:
         logger.error(f"处理 Codeup 文件内容时发生意外错误: {e}")
+        logger.exception("详细错误信息:")
         return None
 
 
@@ -968,17 +1008,25 @@ def add_codeup_mr_comment(organization_id, repository_id, local_id, access_token
     comment_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/review"
     headers = {"x-yunxiao-token": access_token, "Content-Type": "application/json"}
 
-    body = f"""**AI Review [{review.get('severity', 'N/A').upper()}]**: {review.get('category', 'General')}
+    # 处理 review 可能是字符串或字典的情况
+    if isinstance(review, str):
+        # 如果 review 是字符串，直接使用
+        body = f"**AI Code Review**\n\n{review}"
+        review_opinion = "PASS"  # 默认为通过
+    else:
+        # 如果 review 是字典，按原来的格式处理
+        body = f"""**AI Review [{review.get('severity', 'N/A').upper()}]**: {review.get('category', 'General')}
 
 **分析**: {review.get('analysis', 'N/A')}
 
 **建议**:
 {review.get('suggestion', 'N/A')}
 """
+        review_opinion = "NOT_PASS" if review.get('severity') in ['high', 'critical'] else "PASS"
 
     payload = {
         "reviewComment": body,
-        "reviewOpinion": "NOT_PASS" if review.get('severity') in ['high', 'critical'] else "PASS"
+        "reviewOpinion": review_opinion
     }
 
     try:
