@@ -101,19 +101,42 @@ def codeup_webhook_general():
     """处理 Codeup Webhook 请求 (粗粒度审查)"""
     try:
         payload_data = request.get_json()
-        if payload_data is None: 
+        if payload_data is None:
             raise ValueError("请求体为空或非有效 JSON")
     except Exception as e:
         logger.error(f"解析 Codeup JSON 负载时出错 (粗粒度): {e}")
         abort(400, "无效的 JSON 负载")
 
-    # 从 payload 中提取仓库信息
-    repository_info = payload_data.get('repository', {})
-    repository_id = repository_info.get('id')
-    
+    # 添加调试日志来查看实际的负载结构
+    logger.info(f"收到 Codeup Webhook 负载 (通用审查): {json.dumps(payload_data, indent=2, ensure_ascii=False)}")
+
+    # 尝试多种方式获取 repository ID
+    repository_id = None
+    repository_info = {}
+
+    # 方式1: payload_data.repository.id (类似 GitLab)
+    if 'repository' in payload_data:
+        repository_info = payload_data.get('repository', {})
+        repository_id = repository_info.get('id')
+        logger.info(f"尝试从 repository.id 获取: {repository_id}")
+
+    # 方式2: payload_data.project.id (可能的字段名)
+    if not repository_id and 'project' in payload_data:
+        project_info = payload_data.get('project', {})
+        repository_id = project_info.get('id')
+        repository_info = project_info  # 使用 project 信息
+        logger.info(f"尝试从 project.id 获取: {repository_id}")
+
+    # 方式3: 直接从顶级字段获取
     if not repository_id:
-        logger.error("错误: Codeup 负载中缺少 repository.id (粗粒度)。")
-        abort(400, "Codeup 负载中缺少 repository.id")
+        repository_id = payload_data.get('repository_id') or payload_data.get('project_id')
+        logger.info(f"尝试从顶级字段获取: {repository_id}")
+
+    if not repository_id:
+        logger.error(f"错误: Codeup 负载中缺少 repository ID (通用审查)。负载键: {list(payload_data.keys())}")
+        logger.error(f"repository 字段内容: {payload_data.get('repository', 'N/A')}")
+        logger.error(f"project 字段内容: {payload_data.get('project', 'N/A')}")
+        abort(400, "Codeup 负载中缺少 repository ID")
 
     repository_id_str = str(repository_id)
     config = codeup_repo_configs.get(repository_id_str)
