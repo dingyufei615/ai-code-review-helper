@@ -711,17 +711,41 @@ def get_codeup_mr_changes(organization_id, repository_id, local_id, access_token
         source_commit_id = mr_data.get("sourceCommitId")
         target_branch = mr_data.get("targetBranch", "master")
 
+        # 首先获取 PatchSet 列表来获取正确的 fromPatchSetId 和 toPatchSetId
+        patches_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/patches"
+
+        logger.info(f"从以下地址获取 Codeup PatchSet 列表: {patches_url}")
+        patches_response = requests.get(patches_url, headers=headers, timeout=60)
+        patches_response.raise_for_status()
+        patches_data = patches_response.json()
+
+        if not patches_data or len(patches_data) < 2:
+            logger.warning(f"Codeup MR {local_id} 的 PatchSet 数据不足，无法获取变更。")
+            return {}, None
+
+        # 找到 MERGE_TARGET 和 MERGE_SOURCE 的 patchSetBizId
+        from_patch_set_id = None  # MERGE_TARGET (目标分支)
+        to_patch_set_id = None    # MERGE_SOURCE (源分支)
+
+        for patch in patches_data:
+            if patch.get('relatedMergeItemType') == 'MERGE_TARGET':
+                from_patch_set_id = patch.get('patchSetBizId')
+            elif patch.get('relatedMergeItemType') == 'MERGE_SOURCE':
+                to_patch_set_id = patch.get('patchSetBizId')
+
+        if not from_patch_set_id or not to_patch_set_id:
+            logger.error(f"无法获取 Codeup MR {local_id} 的 PatchSet ID。from: {from_patch_set_id}, to: {to_patch_set_id}")
+            return {}, None
+
         # 获取变更文件树
         tree_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/changeTree"
-
-        # 需要获取 fromPatchSetId 和 toPatchSetId，这里先用简化方式
-        # 在实际实现中，可能需要先调用其他 API 获取这些 ID
         tree_params = {
-            "fromPatchSetId": "base",  # 这需要根据实际 API 调整
-            "toPatchSetId": "head"     # 这需要根据实际 API 调整
+            "fromPatchSetId": from_patch_set_id,
+            "toPatchSetId": to_patch_set_id
         }
 
         logger.info(f"从以下地址获取 Codeup 变更文件树: {tree_url}")
+        logger.info(f"使用 PatchSet ID - from: {from_patch_set_id}, to: {to_patch_set_id}")
         tree_response = requests.get(tree_url, headers=headers, params=tree_params, timeout=60)
         tree_response.raise_for_status()
         tree_data = tree_response.json()
@@ -799,14 +823,41 @@ def get_codeup_mr_data_for_general_review(organization_id, repository_id, local_
     general_review_data = []
 
     try:
+        # 首先获取 PatchSet 列表来获取正确的 fromPatchSetId 和 toPatchSetId
+        patches_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/patches"
+
+        logger.info(f"从 {patches_url} 获取 Codeup PatchSet 列表 (用于通用审查)。")
+        patches_response = requests.get(patches_url, headers=headers, timeout=60)
+        patches_response.raise_for_status()
+        patches_data = patches_response.json()
+
+        if not patches_data or len(patches_data) < 2:
+            logger.warning(f"Codeup MR {local_id} 的 PatchSet 数据不足，无法获取变更 (通用审查)。")
+            return []
+
+        # 找到 MERGE_TARGET 和 MERGE_SOURCE 的 patchSetBizId
+        from_patch_set_id = None  # MERGE_TARGET (目标分支)
+        to_patch_set_id = None    # MERGE_SOURCE (源分支)
+
+        for patch in patches_data:
+            if patch.get('relatedMergeItemType') == 'MERGE_TARGET':
+                from_patch_set_id = patch.get('patchSetBizId')
+            elif patch.get('relatedMergeItemType') == 'MERGE_SOURCE':
+                to_patch_set_id = patch.get('patchSetBizId')
+
+        if not from_patch_set_id or not to_patch_set_id:
+            logger.error(f"无法获取 Codeup MR {local_id} 的 PatchSet ID (通用审查)。from: {from_patch_set_id}, to: {to_patch_set_id}")
+            return []
+
         # 获取变更文件树
         tree_url = f"https://{domain}/oapi/v1/codeup/organizations/{organization_id}/repositories/{repository_id}/changeRequests/{local_id}/diffs/changeTree"
         tree_params = {
-            "fromPatchSetId": "base",
-            "toPatchSetId": "head"
+            "fromPatchSetId": from_patch_set_id,
+            "toPatchSetId": to_patch_set_id
         }
 
-        logger.info(f"从 {tree_url} 获取 Codeup MR 文件列表 (用于粗粒度审查)。")
+        logger.info(f"从 {tree_url} 获取 Codeup MR 文件列表 (用于通用审查)。")
+        logger.info(f"使用 PatchSet ID - from: {from_patch_set_id}, to: {to_patch_set_id}")
         response = requests.get(tree_url, headers=headers, params=tree_params, timeout=60)
         response.raise_for_status()
         tree_data = response.json()
