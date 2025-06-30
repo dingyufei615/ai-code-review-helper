@@ -3,13 +3,14 @@ import json
 import logging
 from api.app_factory import app, executor, handle_async_task_exception # 导入 executor 和回调
 from api.core_config import (
-    github_repo_configs, gitlab_project_configs, app_configs,
+    github_repo_configs, gitlab_project_configs, codeup_project_configs, app_configs,
     is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
 )
-from api.utils import verify_github_signature, verify_gitlab_signature
+from api.utils import verify_github_signature, verify_gitlab_signature, verify_codeup_signature
 from api.services.vcs_service import (
-    get_github_pr_changes, add_github_pr_comment, 
+    get_github_pr_changes, add_github_pr_comment,
     get_gitlab_mr_changes, add_gitlab_mr_comment,
+    get_codeup_mr_changes, add_codeup_mr_general_comment,
     add_github_pr_general_comment, # Used for final summary
     add_gitlab_mr_general_comment  # Used for final summary
 )
@@ -42,7 +43,15 @@ def _post_no_issues_comment(vcs_type, comment_function, **comment_args_for_func)
 
 def _get_wecom_summary_line(num_reviews, vcs_type):
     """为企业微信通知生成摘要行。"""
-    entity_name = "Pull Request" if vcs_type == 'github' else "Merge Request"
+    if vcs_type == 'github':
+        entity_name = "Pull Request"
+    elif vcs_type == 'gitlab':
+        entity_name = "Merge Request"
+    elif vcs_type == 'codeup':
+        entity_name = "Merge Request"
+    else:
+        entity_name = "Change Request"
+
     if num_reviews == 0:
         return "AI Code Review 已完成，所有检查均已通过，无审查建议。"
     else:
@@ -363,6 +372,123 @@ def _process_gitlab_detailed_payload(access_token, project_id_str, mr_iid, head_
     add_gitlab_mr_general_comment(project_id_str, mr_iid, access_token, final_comment_text)
 
 
+def _format_codeup_review_comment(reviews: list) -> str:
+    """将多个审查建议格式化为一条 Codeup MR 评论。"""
+    if not reviews:
+        return "AI Code Review 已完成，所有检查均已通过，无审查建议。"
+
+    comment_parts = ["**AI 代码审查报告**\n\n"]
+    
+    # 按文件路径对 reviews 进行分组
+    reviews_by_file = {}
+    for review in reviews:
+        file_path = review.get("file", "Unknown File")
+        if file_path not in reviews_by_file:
+            reviews_by_file[file_path] = []
+        reviews_by_file[file_path].append(review)
+
+    for file_path, file_reviews in reviews_by_file.items():
+        comment_parts.append(f"### 文件: `{file_path}`\n\n")
+        for review in file_reviews:
+            severity = review.get('severity', 'INFO').upper()
+            category = review.get('category', 'General')
+            analysis = review.get('analysis', 'N/A')
+            suggestion = review.get('suggestion', 'N/A')
+            lines_info = review.get("lines", {})
+            line_str = ""
+            if lines_info.get("new"):
+                line_str = f" (行: {lines_info['new']})"
+
+            comment_parts.append(f"**[{severity}] {category}{line_str}**\n")
+            comment_parts.append(f"> **分析**: {analysis}\n")
+            comment_parts.append(f"> **建议**:\n> ```suggestion\n> {suggestion}\n> ```\n")
+        comment_parts.append("\n---\n")
+    
+    return "".join(comment_parts)
+
+
+def _process_codeup_detailed_payload(organization_id, project_id_str, access_token, mr_local_id, head_sha, from_branch, to_branch, project_name, mr_title, mr_url, project_web_url):
+    """实际处理 Codeup 详细审查的核心逻辑。"""
+    logger.info("Codeup (详细审查): 正在获取并解析 MR 变更...")
+    structured_changes = get_codeup_mr_changes(organization_id, project_id_str, access_token, from_branch, to_branch)
+
+    if structured_changes is None:
+        logger.warning("Codeup (详细审查): 获取或解析 diff 内容失败。中止审查。")
+        return
+    if not structured_changes:
+        logger.info("Codeup (详细审查): 解析后未检测到变更。无需审查。")
+        _save_review_results_and_log(
+            vcs_type='codeup', identifier=project_id_str, pr_mr_id=str(mr_local_id),
+            commit_sha=head_sha, review_json_string=json.dumps([]),
+            project_name_for_gitlab=project_name # Reuse gitlab field for project name
+        )
+        mark_commit_as_processed('codeup', project_id_str, str(mr_local_id), head_sha)
+        return
+
+    all_reviews_for_redis = []
+    
+    client = get_openai_client()
+    if not client:
+        logger.error("Codeup (详细审查): OpenAI 客户端不可用。中止审查。")
+        return
+    current_model = app_configs.get("OPENAI_MODEL", "gpt-4o")
+
+    logger.info(f'Codeup (详细审查): 将对 {len(structured_changes)} 个文件逐一发送给 {current_model} 进行审查...')
+
+    for file_path, file_data in structured_changes.items():
+        logger.info(f"Codeup (详细审查): 正在处理文件: {file_path}")
+        reviews_for_file_list = get_openai_detailed_review_for_file(file_path, file_data, client, current_model)
+
+        if reviews_for_file_list:
+            all_reviews_for_redis.extend(reviews_for_file_list)
+            logger.info(f"Codeup (详细审查): 文件 {file_path} 发现 {len(reviews_for_file_list)} 个问题。")
+        else:
+            logger.info(f"Codeup (详细审查): 文件 {file_path} 未发现问题或审查时出错。")
+
+    logger.info("--- Codeup (详细审查): 所有文件处理完毕 ---")
+    final_review_json_for_redis = "[]"
+    if all_reviews_for_redis:
+        try:
+            final_review_json_for_redis = json.dumps(all_reviews_for_redis, ensure_ascii=False, indent=2)
+        except TypeError as e:
+            logger.error(f"Codeup (详细审查): 序列化最终审查列表到 JSON 时出错: {e}")
+
+    _save_review_results_and_log(
+        vcs_type='codeup',
+        identifier=project_id_str,
+        pr_mr_id=str(mr_local_id),
+        commit_sha=head_sha,
+        review_json_string=final_review_json_for_redis,
+        project_name_for_gitlab=project_name
+    )
+
+    # 将所有评论格式化并作为一条评论发布
+    review_comment_body = _format_codeup_review_comment(all_reviews_for_redis)
+    add_codeup_mr_general_comment(organization_id, project_id_str, mr_local_id, access_token, review_comment_body)
+
+    # 发送通知
+    if app_configs.get("WECOM_BOT_WEBHOOK_URL") or app_configs.get("CUSTOM_WEBHOOK_URL"):
+        logger.info("Codeup (详细审查): 正在发送摘要通知...")
+        review_summary_line = _get_wecom_summary_line(len(all_reviews_for_redis), 'codeup')
+        summary_content = f"""**AI代码审查完成 (Codeup)**
+
+> 项目: [{project_name}]({project_web_url})
+> MR: [{mr_title}]({mr_url}) (#{mr_local_id})
+> 分支: `{to_branch}` → `{from_branch}`
+
+{review_summary_line}
+"""
+        send_notifications(summary_content)
+
+    if head_sha:
+        mark_commit_as_processed('codeup', project_id_str, str(mr_local_id), head_sha)
+    else:
+        logger.warning(f"警告: Codeup (详细审查) MR {project_id_str}#{mr_local_id} 的 head_sha 为空。无法标记为已处理。")
+
+    final_comment_text = get_final_summary_comment_text()
+    add_codeup_mr_general_comment(organization_id, project_id_str, mr_local_id, access_token, final_comment_text)
+
+
 @app.route('/gitlab_webhook', methods=['POST'])
 def gitlab_webhook():
     """处理 GitLab Webhook 请求"""
@@ -444,3 +570,101 @@ def gitlab_webhook():
 
     logger.info(f"GitLab (详细审查): MR {project_id_str}#{mr_iid} 的处理任务已提交到后台执行。")
     return jsonify({"message": "GitLab Detailed Webhook processing task accepted."}), 202
+
+
+@app.route('/codeup_webhook', methods=['POST'])
+def codeup_webhook():
+    """处理 Codeup Webhook 请求"""
+    try:
+        data = request.get_json()
+        if data is None: raise ValueError("请求体为空或非有效 JSON")
+    except Exception as e:
+        logger.error(f"解析 Codeup JSON 负载时出错: {e}")
+        abort(400, "无效的 JSON 负载")
+
+    # Codeup 负载结构与 GitLab 不同
+    mr_attrs = data.get('object_attributes', {})
+    project_id = mr_attrs.get('project_id')
+    project_data = data.get('repository', {})
+    
+    if not project_id:
+        logger.error("错误: Codeup 负载中缺少 object_attributes.project_id。")
+        abort(400, "Codeup 负载中缺少 project_id")
+
+    project_id_str = str(project_id)
+    config = codeup_project_configs.get(project_id_str)
+    if not config:
+        logger.error(f"错误: 未找到 Codeup 项目 ID {project_id_str} 的配置。")
+        abort(404, f"未找到 Codeup 项目 {project_id_str} 的配置。请通过 /config/codeup/project 端点进行配置。")
+    
+    webhook_secret = config.get('secret')
+    access_token = config.get('token')
+    organization_id = config.get('organizationId')
+
+    if not all([webhook_secret, access_token, organization_id]):
+        logger.error(f"错误: Codeup 项目 {project_id_str} 的配置不完整（缺少 secret/token/organizationId）。")
+        abort(400, "配置不完整")
+
+    if not verify_codeup_signature(request, webhook_secret):
+        abort(401, "Codeup signature verification failed.")
+    
+    event_type = request.headers.get('X-Codeup-Event', 'Merge Request Hook') # 假设的 Header 和值
+    if event_type != "Merge Request Hook":
+        logger.info(f"Codeup: 忽略事件类型: {event_type}")
+        return "事件已忽略", 200
+
+    mr_action = mr_attrs.get('action') # e.g., 'open', 'update', 'close', 'merge'
+    mr_state = mr_attrs.get('state') # e.g., 'opened', 'closed', 'merged'
+
+    mr_local_id = mr_attrs.get('iid') # 在 GitLab 中是 iid, 假设 Codeup 也是
+    if not mr_local_id: # Codeup 文档使用 localId, 可能是这个
+        mr_local_id = mr_attrs.get('localId')
+
+    if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
+        mr_id_str = str(mr_local_id)
+        logger.info(f"Codeup: MR {project_id_str}#{mr_id_str} 已 {mr_action or mr_state}。正在清理 Redis 记录...")
+        remove_processed_commit_entries_for_pr_mr('codeup', project_id_str, mr_id_str)
+        return f"MR {mr_id_str} 已 {mr_action or mr_state}，记录已清理。", 200
+
+    # 假设 Codeup 的触发条件与 GitLab 类似
+    if mr_state not in ['opened', 'reopened'] and mr_action not in ['open', 'reopen', 'update']:
+        logger.info(f"Codeup: 忽略 MR 操作 '{mr_action}' 或状态 '{mr_state}' (非审查触发条件)。")
+        return "MR 操作/状态已忽略 (非审查触发条件)", 200
+
+    head_sha = mr_attrs.get('last_commit', {}).get('id')
+    from_branch = mr_attrs.get('target_branch') # 注意 Codeup API from/to 与源/目标分支的对应关系
+    to_branch = mr_attrs.get('source_branch')
+    mr_title = mr_attrs.get('title')
+    mr_url = mr_attrs.get('url')
+    project_name = project_data.get('name')
+    project_web_url = project_data.get('homepage')
+
+    if not all([mr_local_id, head_sha, from_branch, to_branch]):
+        logger.error(f"错误: Codeup 负载中缺少必要的 MR 信息 (mr_local_id, head_sha, from_branch, to_branch)。")
+        abort(400, "负载信息不完整")
+
+    logger.info(f"--- 收到 Codeup Merge Request Hook (详细审查) ---")
+    logger.info(f"项目 ID: {project_id_str}, MR ID: {mr_local_id}, Head SHA: {head_sha}")
+
+    if is_commit_processed('codeup', project_id_str, str(mr_local_id), head_sha):
+        logger.info(f"Codeup (详细审查): MR {project_id_str}#{mr_local_id} 的提交 {head_sha} 已处理。跳过。")
+        return "提交已处理", 200
+
+    future = executor.submit(
+        _process_codeup_detailed_payload,
+        organization_id=organization_id,
+        project_id_str=project_id_str,
+        access_token=access_token,
+        mr_local_id=mr_local_id,
+        head_sha=head_sha,
+        from_branch=from_branch,
+        to_branch=to_branch,
+        project_name=project_name,
+        mr_title=mr_title,
+        mr_url=mr_url,
+        project_web_url=project_web_url,
+    )
+    future.add_done_callback(handle_async_task_exception)
+
+    logger.info(f"Codeup (详细审查): MR {project_id_str}#{mr_local_id} 的处理任务已提交到后台执行。")
+    return jsonify({"message": "Codeup Detailed Webhook processing task accepted."}), 202

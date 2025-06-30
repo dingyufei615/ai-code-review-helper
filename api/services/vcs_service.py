@@ -3,8 +3,9 @@ import json
 import traceback
 import logging
 import base64
-from api.core_config import app_configs, gitlab_project_configs
-from api.utils import parse_single_file_diff
+from urllib.parse import quote
+from api.core_config import app_configs, gitlab_project_configs, codeup_project_configs
+from api.utils import parse_single_file_diff, parse_single_file_diff_for_codeup
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,71 @@ def get_gitlab_mr_changes(project_id, mr_iid, access_token):
         logger.exception(f"获取/解析项目 {project_id} 中 MR {mr_iid} 的 diff 时发生意外错误:")
 
     return structured_changes, position_info
+
+
+def get_codeup_mr_changes(organization_id, project_id, access_token, from_branch, to_branch):
+    """从 Codeup API 获取 Merge Request 的变更，并为每个文件解析成结构化数据"""
+    if not access_token:
+        logger.error(f"错误: Codeup 项目 {project_id} 未配置访问令牌。")
+        return None
+
+    current_codeup_api_url = app_configs.get("CODEUP_API_URL", "https://openapi-rdc.aliyuncs.com")
+    # 使用 'compares' API 获取两个分支间的 diff
+    compare_url = f"{current_codeup_api_url}/oapi/v1/codeup/organizations/{organization_id}/repositories/{project_id}/compares"
+    headers = {"x-yunxiao-token": access_token}
+    params = {
+        "from": from_branch, # from 目标分支
+        "to": to_branch, # to 是源分支
+        "sourceType": "branch",
+        "targetType": "branch",
+        "straight": "false" # 使用 merge-base
+    }
+
+    structured_changes = {}
+    try:
+        logger.info(f"从以下地址获取 Codeup MR 变更: {compare_url} with params {params}")
+        response = requests.get(compare_url, headers=headers, params=params, timeout=120)
+        response.raise_for_status()
+        compare_data = response.json()
+        logger.info(f"Codeup API 响应 (get_codeup_mr_changes): {json.dumps(compare_data, ensure_ascii=False, indent=2)}")
+        
+        api_diffs = compare_data.get('diffs') or []
+        logger.info(f"从 Codeup API 收到 {len(api_diffs)} 个文件 diff。")
+
+        for diff_item in api_diffs:
+            file_diff_text = diff_item.get('diff')
+            new_path = diff_item.get('newPath')
+            old_path = diff_item.get('oldPath')
+            is_renamed = diff_item.get('renamedFile', False)
+
+            if not file_diff_text or not new_path:
+                logger.warning(f"警告: 因缺少 diff 文本或 new_path 而跳过 diff 项: {new_path or 'N/A'}")
+                continue
+            
+            logger.info(f"解析 Codeup 文件 diff: {new_path} (旧路径: {old_path if is_renamed else 'N/A'})")
+            try:
+                file_parsed_changes = parse_single_file_diff_for_codeup(file_diff_text, new_path, old_path if is_renamed else None)
+                if file_parsed_changes and file_parsed_changes.get("changes"):
+                    structured_changes[new_path] = file_parsed_changes
+                    logger.info(f"成功解析 {new_path} 的 {len(file_parsed_changes['changes'])} 处变更。")
+                else:
+                    logger.info(f"未从 {new_path} 的 diff 中解析出变更。")
+            except Exception as parse_e:
+                logger.exception(f"解析文件 {new_path} 的 diff 时出错:")
+        
+        if not structured_changes:
+            logger.info(f"在 Codeup 项目 {project_id} 的 MR 的所有文件中均未找到可解析的变更。")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 Codeup API ({compare_url}) 获取数据时出错: {e}")
+        if 'response' in locals() and response is not None:
+            logger.error(f"响应状态: {response.status_code}, 响应体: {response.text[:500]}...")
+        return None
+    except Exception as e:
+        logger.exception(f"获取/解析 Codeup 项目 {project_id} 的 MR diff 时发生意外错误:")
+        return None
+
+    return structured_changes
 
 
 def _fetch_file_content_from_url(url: str, headers: dict, is_github: bool = False, max_size_bytes: int = None):
@@ -412,6 +478,79 @@ def get_gitlab_mr_data_for_general_review(project_id: str, mr_iid: int, access_t
         logger.exception(f"为 GitLab MR {project_id}#{mr_iid} 准备粗粒度审查数据时发生意外错误:")
         return None
         
+    return general_review_data
+
+
+def get_codeup_mr_data_for_general_review(organization_id: str, project_id: str, access_token: str, from_branch: str, to_branch: str):
+    """
+    为 Codeup MR 获取通用审查所需的数据：文件列表、每个文件的 diff 和旧内容。
+    """
+    if not access_token:
+        logger.error(f"错误: Codeup 项目 {project_id} 未配置访问令牌。")
+        return None
+
+    current_codeup_api_url = app_configs.get("CODEUP_API_URL", "https://openapi-rdc.aliyuncs.com")
+    compare_url = f"{current_codeup_api_url}/oapi/v1/codeup/organizations/{organization_id}/repositories/{project_id}/compares"
+    headers = {"x-yunxiao-token": access_token}
+    params = {
+        "from": to_branch, # from 是源分支
+        "to": from_branch, # to 是目标分支
+        "sourceType": "branch",
+        "targetType": "branch",
+        "straight": "false" # 使用 merge-base
+    }
+
+    general_review_data = []
+
+    try:
+        logger.info(f"从 {compare_url} 获取 Codeup MR 变更 (用于通用审查)。")
+        response = requests.get(compare_url, headers=headers, params=params, timeout=120)
+        response.raise_for_status()
+        compare_data = response.json()
+        logger.info(f"Codeup API 响应 (get_codeup_mr_data_for_general_review): {json.dumps(compare_data, ensure_ascii=False, indent=2)}")
+        
+        api_diffs = compare_data.get('diffs') or []
+        logger.info(f"从 Codeup API (compares) 收到 {len(api_diffs)} 个文件 diff。")
+
+        for diff_item in api_diffs:
+            new_path = diff_item.get('newPath')
+            old_path = diff_item.get('oldPath')
+            diff_text = diff_item.get('diff', '')
+            is_renamed = diff_item.get('renamedFile', False)
+            is_deleted = diff_item.get('deletedFile', False)
+            is_new = diff_item.get('newFile', False)
+            
+            status = "modified"
+            if is_new: status = "added"
+            if is_deleted: status = "deleted"
+            if is_renamed: status = "renamed"
+
+            file_data_entry = {
+                "file_path": new_path,
+                "status": status,
+                "diff_text": diff_text,
+                "old_content": None,
+            }
+
+            path_for_old_content = old_path if is_renamed else new_path
+            if status in ['modified', 'removed', 'renamed'] and from_branch and path_for_old_content:
+                encoded_old_path = quote(path_for_old_content, safe='')
+                old_content_url = f"{current_codeup_api_url}/oapi/v1/codeup/organizations/{organization_id}/repositories/{project_id}/files/{encoded_old_path}?ref={from_branch}"
+                logger.info(f"获取旧内容 (Codeup): {path_for_old_content} (ref: {from_branch})")
+                
+                # Codeup API for files needs 'x-yunxiao-token' header.
+                content_headers = {"x-yunxiao-token": access_token}
+                file_data_entry["old_content"] = _fetch_file_content_from_url(old_content_url, content_headers, max_size_bytes=1024*1024)
+
+            general_review_data.append(file_data_entry)
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 Codeup API ({compare_url}) 获取通用审查数据时出错: {e}")
+        return None # Indicate error
+    except Exception as e:
+        logger.exception(f"为 Codeup 项目 {project_id} MR 准备通用审查数据时发生意外错误:")
+        return None
+
     return general_review_data
 
 
@@ -679,4 +818,42 @@ def add_gitlab_mr_general_comment(project_id: str, mr_iid: int, access_token: st
         return False
     except Exception as e:
         logger.exception(f"添加 GitLab 粗粒度审查评论时发生意外错误:")
+        return False
+
+
+def add_codeup_mr_general_comment(organization_id: str, project_id: str, mr_local_id: int, access_token: str, review_text: str):
+    """向 Codeup Merge Request 添加一个通用的审查评论。"""
+    if not access_token:
+        logger.error("错误: 无法添加 Codeup 评论，缺少访问令牌。")
+        return False
+    if not review_text.strip():
+        logger.info("Codeup 审查文本为空，不添加评论。")
+        return True
+
+    current_codeup_api_url = app_configs.get("CODEUP_API_URL", "https://openapi-rdc.aliyuncs.com")
+    # 使用 'review' API 来添加评论
+    comment_url = f"{current_codeup_api_url}/oapi/v1/codeup/organizations/{organization_id}/repositories/{project_id}/changeRequests/{mr_local_id}/review"
+    headers = {"x-yunxiao-token": access_token, "Content-Type": "application/json"}
+    # reviewOpinion 不传，仅作为评论功能使用
+    payload = {"reviewComment": review_text}
+
+    response_obj = None
+    try:
+        response_obj = requests.post(comment_url, headers=headers, json=payload, timeout=30)
+        response_obj.raise_for_status()
+        response_data = response_obj.json()
+        if response_data.get('result') is True:
+            logger.info(f"成功向 Codeup MR #{mr_local_id} 添加通用审查评论。")
+            return True
+        else:
+            logger.error(f"向 Codeup MR #{mr_local_id} 添加评论失败，API 返回: {response_data}")
+            return False
+    except requests.exceptions.RequestException as e:
+        error_message = f"添加 Codeup 审查评论时出错: {e}"
+        if response_obj is not None:
+            error_message += f" - 状态: {response_obj.status_code} - 响应体: {response_obj.text[:500]}"
+        logger.error(error_message)
+        return False
+    except Exception as e:
+        logger.exception(f"添加 Codeup 审查评论时发生意外错误:")
         return False

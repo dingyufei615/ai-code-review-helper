@@ -7,8 +7,8 @@ import json
 import logging 
 from api.app_factory import app
 from api.core_config import (
-    app_configs, github_repo_configs, gitlab_project_configs,
-    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY,
+    app_configs, github_repo_configs, gitlab_project_configs, codeup_project_configs,
+    REDIS_GITHUB_CONFIGS_KEY, REDIS_GITLAB_CONFIGS_KEY, REDIS_CODEUP_CONFIGS_KEY,
     get_all_reviewed_prs_mrs_keys, get_review_results, delete_review_results_for_pr_mr # 新增导入
 )
 import api.core_config as core_config_module  # 访问 redis_client 的推荐方式
@@ -125,6 +125,63 @@ def list_gitlab_project_configs():
     return jsonify({"configured_gitlab_projects": list(gitlab_project_configs.keys())}), 200
 
 
+# Codeup Configuration Management
+@app.route('/config/codeup/project', methods=['POST'])
+@require_admin_key
+def add_or_update_codeup_project_config():
+    if not request.is_json: return jsonify({"error": "Request must be JSON"}), 400
+    data = request.get_json()
+    project_id = data.get('project_id')
+    organization_id = data.get('organizationId')
+    secret = data.get('secret')
+    token = data.get('token')
+
+    if not project_id or not organization_id or not secret or not token:
+        return jsonify({"error": "Missing required fields: project_id, organizationId, secret, token"}), 400
+
+    project_id_str = str(project_id)
+    config_data = {
+        "organizationId": organization_id,
+        "secret": secret,
+        "token": token
+    }
+
+    codeup_project_configs[project_id_str] = config_data
+    if core_config_module.redis_client:
+        try:
+            core_config_module.redis_client.hset(REDIS_CODEUP_CONFIGS_KEY, project_id_str, json.dumps(config_data))
+            logger.info(f"Codeup 配置 {project_id_str} 已保存到 Redis。")
+        except Exception as e:
+            logger.error(f"保存 Codeup 配置 {project_id_str} 到 Redis 时出错: {e}")
+
+    logger.info(f"为项目 ID 添加/更新了 Codeup 配置: {project_id_str}")
+    return jsonify({"message": f"Configuration for Codeup project {project_id_str} added/updated."}), 200
+
+
+@app.route('/config/codeup/project/<string:project_id>', methods=['DELETE'])
+@require_admin_key
+def delete_codeup_project_config(project_id):
+    project_id_str = str(project_id)
+    if project_id_str in codeup_project_configs:
+        del codeup_project_configs[project_id_str]
+        if core_config_module.redis_client:
+            try:
+                core_config_module.redis_client.hdel(REDIS_CODEUP_CONFIGS_KEY, project_id_str)
+                logger.info(f"Codeup 配置 {project_id_str} 已从 Redis 删除。")
+            except Exception as e:
+                logger.error(f"从 Redis 删除 Codeup 配置 {project_id_str} 时出错: {e}")
+
+        logger.info(f"为项目 ID 删除了 Codeup 配置: {project_id_str}")
+        return jsonify({"message": f"Configuration for Codeup project {project_id_str} deleted."}), 200
+    return jsonify({"error": f"Configuration for Codeup project {project_id_str} not found."}), 404
+
+
+@app.route('/config/codeup/projects', methods=['GET'])
+@require_admin_key
+def list_codeup_project_configs():
+    return jsonify({"configured_codeup_projects": list(codeup_project_configs.keys())}), 200
+
+
 # --- Global Application Configuration Management ---
 @app.route('/config/global_settings', methods=['GET'])
 @require_admin_key
@@ -186,7 +243,7 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
     commit_sha = request.args.get('commit_sha', None)
 
     # 允许的 vcs_type 包括详细审查和通用审查
-    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general']
+    allowed_vcs_types = ['github', 'gitlab', 'github_general', 'gitlab_general', 'codeup', 'codeup_general']
     if vcs_type not in allowed_vcs_types:
         return jsonify({"error": f"无效的 VCS 类型。支持的类型: {', '.join(allowed_vcs_types)}。"}), 400
 
@@ -244,7 +301,7 @@ def get_specific_review_results(vcs_type, identifier, pr_mr_id):
         if project_name:
             response_data["project_name"] = project_name
         
-        if vcs_type == 'gitlab' and project_name:
+        if (vcs_type.startswith('gitlab') or vcs_type.startswith('codeup')) and project_name:
             response_data["display_identifier"] = project_name
         else:
             response_data["display_identifier"] = identifier

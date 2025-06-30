@@ -12,6 +12,7 @@
     <ul>
         <li><a href="#" id="navGithub" class="active">GitHub 配置</a></li>
         <li><a href="#" id="navGitlab">GitLab 配置</a></li>
+        <li><a href="#" id="navCodeup">Codeup 配置</a></li>
         <li><a href="#" id="navLlmSettings">LLM 配置</a></li>
         <li><a href="#" id="navNotificationSettings">通知配置</a></li>
         <li><a href="#" id="navApiKeySettings">API 密钥设置</a></li>
@@ -78,6 +79,30 @@
             </div>
         </div>
 
+        <!-- Codeup Configurations -->
+        <div id="codeupSection" class="content-section">
+            <div class="config-section">
+                <h2>Codeup 项目配置</h2>
+                <form id="codeupConfigForm">
+                    <label for="codeupProjectId">项目 ID:</label>
+                    <input type="number" id="codeupProjectId" required>
+
+                    <label for="codeupOrganizationId">Organization ID:</label>
+                    <input type="text" id="codeupOrganizationId" required>
+
+                    <label for="codeupSecret">Webhook Secret:</label>
+                    <input type="text" id="codeupSecret" required>
+
+                    <label for="codeupToken">Codeup Access Token:</label>
+                    <input type="text" id="codeupToken" required>
+
+                    <button type="submit">添加/更新 Codeup 配置</button>
+                </form>
+                <h3>已配置的 Codeup 项目:</h3>
+                <ul id="codeupProjectList" class="config-list"></ul>
+            </div>
+        </div>
+
         <!-- LLM Settings Section -->
         <div id="llmSettingsSection" class="content-section">
             <div class="config-section">
@@ -138,6 +163,7 @@
 
     const navGithub = document.getElementById('navGithub');
     const navGitlab = document.getElementById('navGitlab');
+    const navCodeup = document.getElementById('navCodeup');
     const navLlmSettings = document.getElementById('navLlmSettings');
     const navNotificationSettings = document.getElementById('navNotificationSettings');
     const navApiKeySettings = document.getElementById('navApiKeySettings'); // 新增
@@ -145,6 +171,7 @@
 
     const githubSection = document.getElementById('githubSection');
     const gitlabSection = document.getElementById('gitlabSection');
+    const codeupSection = document.getElementById('codeupSection');
     const llmSettingsSection = document.getElementById('llmSettingsSection');
     const notificationSettingsSection = document.getElementById('notificationSettingsSection');
     const apiKeySettingsSection = document.getElementById('apiKeySettingsSection'); // 新增
@@ -178,6 +205,7 @@
         // Hide all sections
         githubSection.classList.remove('active');
         gitlabSection.classList.remove('active');
+        codeupSection.classList.remove('active');
         llmSettingsSection.classList.remove('active');
         notificationSettingsSection.classList.remove('active');
         apiKeySettingsSection.classList.remove('active'); // 新增
@@ -187,6 +215,7 @@
         // Deactivate all nav links
         navGithub.classList.remove('active');
         navGitlab.classList.remove('active');
+        navCodeup.classList.remove('active');
         navLlmSettings.classList.remove('active');
         navNotificationSettings.classList.remove('active');
         navApiKeySettings.classList.remove('active'); // 新增
@@ -200,6 +229,9 @@
         } else if (sectionToShow === 'gitlab') {
             gitlabSection.classList.add('active');
             navGitlab.classList.add('active');
+        } else if (sectionToShow === 'codeup') {
+            codeupSection.classList.add('active');
+            navCodeup.classList.add('active');
         } else if (sectionToShow === 'llmSettings') {
             llmSettingsSection.classList.add('active');
             navLlmSettings.classList.add('active');
@@ -224,6 +256,10 @@
     navGitlab.addEventListener('click', (e) => {
         e.preventDefault();
         showSection('gitlab');
+    });
+    navCodeup.addEventListener('click', (e) => {
+        e.preventDefault();
+        showSection('codeup');
     });
     navLlmSettings.addEventListener('click', (e) => {
         e.preventDefault();
@@ -421,6 +457,69 @@
         }
     }
 
+    // Codeup Functions
+    const codeupConfigForm = document.getElementById('codeupConfigForm');
+    const codeupProjectList = document.getElementById('codeupProjectList');
+
+    async function loadCodeupProjects() {
+        const data = await fetchData('/config/codeup/projects');
+        if (data && data.configured_codeup_projects) {
+            codeupProjectList.innerHTML = '';
+            data.configured_codeup_projects.forEach(projectId => {
+                const li = document.createElement('li');
+                const span = document.createElement('span');
+                span.textContent = `项目 ID: ${projectId}`;
+                li.appendChild(span);
+
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = '删除';
+                deleteButton.className = 'delete-btn';
+                deleteButton.onclick = () => deleteCodeupProject(projectId);
+                li.appendChild(deleteButton);
+                codeupProjectList.appendChild(li);
+            });
+        } else if (data) {
+            codeupProjectList.innerHTML = '<li>暂无已配置的 Codeup 项目。</li>';
+        }
+    }
+
+    codeupConfigForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const projectId = document.getElementById('codeupProjectId').value;
+        const organizationId = document.getElementById('codeupOrganizationId').value;
+        const secret = document.getElementById('codeupSecret').value;
+        const token = document.getElementById('codeupToken').value;
+
+        if (!projectId || !organizationId || !secret || !token) {
+            showStatus('Codeup 配置字段不能为空!', true);
+            return;
+        }
+
+        const payload = {
+            project_id: projectId,
+            organizationId: organizationId,
+            secret: secret,
+            token: token
+        };
+
+        const result = await fetchData('/config/codeup/project', 'POST', payload);
+
+        if (result && result.message) {
+            showStatus(result.message);
+            codeupConfigForm.reset();
+            loadCodeupProjects();
+        }
+    });
+
+    async function deleteCodeupProject(projectId) {
+        if (!confirm(`确定要删除 Codeup 项目 ID ${projectId} 的配置吗?`)) return;
+        const result = await fetchData(`/config/codeup/project/${projectId}`, 'DELETE');
+        if (result && result.message) {
+            showStatus(result.message);
+            loadCodeupProjects();
+        }
+    }
+
     // Initial Load (if API key is present, or to show empty state)
     // We don't auto-load on page start because API key is needed.
     // User can fill API key and then lists will populate upon first action or a manual refresh button (not implemented for brevity)
@@ -519,6 +618,7 @@
             console.log("API Key loaded from cookie. Attempting to load configs.");
             await loadGithubRepos();
             await loadGitlabProjects();
+            await loadCodeupProjects();
             await loadGlobalSettings(); // Load global settings
             // Do not auto-load review results here, it's loaded when section is active
         } else {
@@ -531,6 +631,7 @@
                 console.log("API Key provided by user and saved. Attempting to load configs.");
                 await loadGithubRepos();
                 await loadGitlabProjects();
+                await loadCodeupProjects();
                 await loadGlobalSettings(); // Load global settings
                 // Do not auto-load review results here
             } else {
@@ -538,6 +639,7 @@
                 adminApiKeyInput.focus();
                 githubRepoList.innerHTML = '<li>请输入 Admin API Key 以加载 GitHub 仓库。</li>';
                 gitlabProjectList.innerHTML = '<li>请输入 Admin API Key 以加载 GitLab 项目。</li>';
+                codeupProjectList.innerHTML = '<li>请输入 Admin API Key 以加载 Codeup 项目。</li>';
                 console.log("API Key not provided by user. Config loading skipped.");
             }
         }
@@ -552,9 +654,11 @@
             // Reload lists with the new key
             githubRepoList.innerHTML = ''; 
             gitlabProjectList.innerHTML = ''; 
+            codeupProjectList.innerHTML = '';
             console.log("API Key changed by user. Attempting to reload configs.");
             await loadGithubRepos();
             await loadGitlabProjects();
+            await loadCodeupProjects();
             await loadGlobalSettings(); // Reload global settings
             if (aiReviewResultsSection.classList.contains('active')) { // If review section is active, reload its list
                 loadReviewedPrMrList();
@@ -564,6 +668,7 @@
             apiKeyStatus.textContent = 'Admin API Key 已清除。请输入有效的 Key 以继续。';
             githubRepoList.innerHTML = '<li>Admin API Key 已清除。请输入 Key 以加载 GitHub 仓库。</li>';
             gitlabProjectList.innerHTML = '<li>Admin API Key 已清除。请输入 Key 以加载 GitLab 项目。</li>';
+            codeupProjectList.innerHTML = '<li>Admin API Key 已清除。请输入 Key 以加载 Codeup 项目。</li>';
             console.log("API Key cleared by user. Configs cleared.");
         }
     });

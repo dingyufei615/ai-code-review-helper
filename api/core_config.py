@@ -20,6 +20,7 @@ app_configs = {
     "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "gpt-4o"),
     "GITHUB_API_URL": os.environ.get("GITHUB_API_URL", "https://api.github.com"),
     "GITLAB_INSTANCE_URL": os.environ.get("GITLAB_INSTANCE_URL", "https://gitlab.com"),
+    "CODEUP_API_URL": os.environ.get("CODEUP_API_URL", "https://openapi-rdc.aliyuncs.com"), # 新增：Codeup API URL
     "WECOM_BOT_WEBHOOK_URL": os.environ.get("WECOM_BOT_WEBHOOK_URL", ""),
     # Redis 配置 (新增)
     "REDIS_HOST": os.environ.get("REDIS_HOST", None),
@@ -36,6 +37,7 @@ redis_client = None
 REDIS_KEY_PREFIX = "ai_code_review_helper:"
 REDIS_GITHUB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}github_repo_configs"
 REDIS_GITLAB_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}gitlab_project_configs"
+REDIS_CODEUP_CONFIGS_KEY = f"{REDIS_KEY_PREFIX}codeup_project_configs" # 新增
 REDIS_PROCESSED_COMMITS_SET_KEY = f"{REDIS_KEY_PREFIX}processed_commits_set"
 REDIS_REVIEW_RESULTS_KEY_PREFIX = f"{REDIS_KEY_PREFIX}review_results:"
 
@@ -75,8 +77,7 @@ def init_redis_client():
 
 def load_configs_from_redis():
     """如果 Redis 可用，则从 Redis 加载配置到内存中。"""
-    global github_repo_configs, gitlab_project_configs
-    global github_repo_configs, gitlab_project_configs # 确保修改的是全局变量
+    global github_repo_configs, gitlab_project_configs, codeup_project_configs
     if redis_client:
         try:
             # 加载 GitHub 配置
@@ -102,6 +103,18 @@ def load_configs_from_redis():
                     logger.error(f"解码/解析 GitLab 配置时出错，键: {key_raw}: {e}")
             if gitlab_data_raw:
                 logger.info(f"从 Redis 加载了 {len(gitlab_project_configs)} 个 GitLab 配置。")
+
+            # 加载 Codeup 配置
+            codeup_data_raw = redis_client.hgetall(REDIS_CODEUP_CONFIGS_KEY)
+            for key_raw, value_raw in codeup_data_raw.items():
+                try:
+                    key = key_raw.decode('utf-8')
+                    value_str = value_raw.decode('utf-8')
+                    codeup_project_configs[key] = json.loads(value_str)
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.error(f"解码/解析 Codeup 配置时出错，键: {key_raw}: {e}")
+            if codeup_data_raw:
+                logger.info(f"从 Redis 加载了 {len(codeup_project_configs)} 个 Codeup 配置。")
         except redis.exceptions.RedisError as e:
             logger.error(f"从 Redis 加载配置时 Redis 出错: {e}。内存中的配置可能不完整。")
         except Exception as e:
@@ -313,15 +326,15 @@ def get_all_reviewed_prs_mrs_keys():
                     display_identifier = identifier_str
                     display_vcs_type_prefix = vcs_type_full.upper()
 
-                    # 统一处理 GitLab 项目名称获取
-                    if vcs_type_full.startswith('gitlab'):
+                    # 统一处理 GitLab/Codeup 项目名称获取
+                    if vcs_type_full.startswith('gitlab') or vcs_type_full.startswith('codeup'):
                         try:
                             project_name_bytes = redis_client.hget(key, "_project_name")
                             if project_name_bytes:
                                 display_identifier = project_name_bytes.decode('utf-8')
-                                logger.debug(f"找到 GitLab 项目名称 '{display_identifier}' 用于 Key '{key}' (VCS Type: {vcs_type_full})")
+                                logger.debug(f"找到 GitLab/Codeup 项目名称 '{display_identifier}' 用于 Key '{key}' (VCS Type: {vcs_type_full})")
                             else:
-                                logger.debug(f"未在 Key '{key}' 中找到 GitLab 项目名称 (VCS Type: {vcs_type_full})，将使用 ID '{identifier_str}'。")
+                                logger.debug(f"未在 Key '{key}' 中找到 GitLab/Codeup 项目名称 (VCS Type: {vcs_type_full})，将使用 ID '{identifier_str}'。")
                         except Exception as e_proj_name:
                             logger.error(f"从 Redis Key '{key}' (VCS Type: {vcs_type_full}) 获取项目名称时出错: {e_proj_name}")
                     
@@ -334,6 +347,10 @@ def get_all_reviewed_prs_mrs_keys():
                          display_vcs_type_prefix = "GITHUB (Detailed)"
                     elif vcs_type_full == "gitlab":
                          display_vcs_type_prefix = "GITLAB (Detailed)"
+                    elif vcs_type_full == "codeup":
+                        display_vcs_type_prefix = "CODEUP (Detailed)"
+                    elif vcs_type_full == "codeup_general":
+                        display_vcs_type_prefix = "CODEUP (General)"
 
 
                     identifiers.append({
@@ -377,4 +394,8 @@ github_repo_configs = {}
 # GitLab 项目配置
 # key: project_id (string), value: {"secret": "webhook_secret", "token": "gitlab_access_token", "instance_url": "custom_instance_url"}
 gitlab_project_configs = {}
+
+# Codeup 项目配置 (新增)
+# key: project_id (string), value: {"organizationId": "org_id", "secret": "webhook_secret", "token": "codeup_access_token"}
+codeup_project_configs = {}
 # --- ---

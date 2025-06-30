@@ -3,13 +3,14 @@ import json
 import logging
 from api.app_factory import app, executor, handle_async_task_exception # 导入 executor 和回调
 from api.core_config import (
-    github_repo_configs, gitlab_project_configs, app_configs,
+    github_repo_configs, gitlab_project_configs, codeup_project_configs, app_configs,
     is_commit_processed, mark_commit_as_processed, remove_processed_commit_entries_for_pr_mr
 )
-from api.utils import verify_github_signature, verify_gitlab_signature
+from api.utils import verify_github_signature, verify_gitlab_signature, verify_codeup_signature
 from api.services.vcs_service import (
     get_github_pr_data_for_general_review, add_github_pr_general_comment,
     get_gitlab_mr_data_for_general_review, add_gitlab_mr_general_comment,
+    get_codeup_mr_data_for_general_review, add_codeup_mr_general_comment,
     get_gitlab_mr_changes # 新增导入
 )
 from api.services.llm_service import get_openai_code_review_general
@@ -420,3 +421,199 @@ def gitlab_webhook_general():
 
     logger.info(f"GitLab (通用审查): MR {project_id_str}#{mr_iid} 的处理任务已提交到后台执行。")
     return jsonify({"message": "GitLab General Webhook processing task accepted."}), 202
+
+
+def _process_codeup_general_payload(organization_id, project_id_str, access_token, mr_local_id, head_sha, from_branch, to_branch, project_name, mr_title, mr_url, project_web_url):
+    """实际处理 Codeup 通用审查的核心逻辑。"""
+    logger.info("Codeup (通用审查): 正在获取 MR 数据 (diffs 和文件内容)...")
+    file_data_list = get_codeup_mr_data_for_general_review(organization_id, project_id_str, access_token, from_branch, to_branch)
+
+    if file_data_list is None:
+        logger.warning("Codeup (通用审查): 获取 MR 数据失败。中止审查。")
+        return
+    if not file_data_list:
+        logger.info("Codeup (通用审查): 未检测到文件变更或数据。无需审查。")
+        _save_review_results_and_log(
+            vcs_type='codeup_general', identifier=project_id_str, pr_mr_id=str(mr_local_id),
+            commit_sha=head_sha, review_json_string=json.dumps([]),
+            project_name_for_gitlab=project_name # Reuse field
+        )
+        return
+
+    aggregated_general_reviews_for_storage = []
+    files_with_issues_details = []
+
+    logger.info(f'Codeup (通用审查): 将对 {len(file_data_list)} 个文件逐一发送给 {app_configs.get("OPENAI_MODEL", "gpt-4o")} 进行审查...')
+
+    for file_item in file_data_list:
+        current_file_path = file_item.get("file_path", "Unknown File")
+        logger.info(f"Codeup (通用审查): 正在对文件 {current_file_path} 进行 LLM 审查...")
+        review_text_for_file = get_openai_code_review_general(file_item)
+
+        logger.info(f"Codeup (通用审查): 文件 {current_file_path} 的 LLM 原始输出:\n{review_text_for_file}")
+        
+        if review_text_for_file and review_text_for_file.strip() and \
+           "未发现严重问题" not in review_text_for_file and \
+           "没有修改建议" not in review_text_for_file and \
+           "OpenAI client is not available" not in review_text_for_file and \
+           "Error serializing input data" not in review_text_for_file:
+            
+            logger.info(f"Codeup (通用审查): 文件 {current_file_path} 发现问题。")
+            files_with_issues_details.append({"file": current_file_path, "issues": review_text_for_file})
+            
+            review_wrapper_for_file = {
+                "file": current_file_path,
+                "lines": {"old": None, "new": None},
+                "category": "General Review",
+                "severity": "INFO",
+                "analysis": review_text_for_file,
+                "suggestion": "请参考上述分析。"
+            }
+            aggregated_general_reviews_for_storage.append(review_wrapper_for_file)
+        else:
+            logger.info(f"Codeup (通用审查): 文件 {current_file_path} 未发现问题、审查意见为空或指示无问题。")
+            
+    # After processing all files, post one aggregated comment
+    if files_with_issues_details:
+        comment_parts = ["**AI 通用审查报告**\n\n"]
+        for item in files_with_issues_details:
+            comment_parts.append(f"### 文件: `{item['file']}`\n\n")
+            comment_parts.append(f"{item['issues']}\n\n---\n")
+        
+        aggregated_comment_text = "".join(comment_parts)
+        logger.info("Codeup (通用审查): 发现问题，正在添加聚合评论...")
+        add_codeup_mr_general_comment(organization_id, project_id_str, mr_local_id, access_token, aggregated_comment_text)
+    else:
+        logger.info("Codeup (通用审查): 所有被检查的文件均未发现问题。")
+        no_issues_text = f"AI 通用代码审查已完成，对 {len(file_data_list)} 个文件的检查均未发现主要问题或无审查建议。"
+        add_codeup_mr_general_comment(organization_id, project_id_str, mr_local_id, access_token, no_issues_text)
+    
+    # Save results to Redis
+    review_json_string_for_storage = json.dumps(aggregated_general_reviews_for_storage) if aggregated_general_reviews_for_storage else "[]"
+    _save_review_results_and_log(
+        vcs_type='codeup_general',
+        identifier=project_id_str,
+        pr_mr_id=str(mr_local_id),
+        commit_sha=head_sha,
+        review_json_string=review_json_string_for_storage,
+        project_name_for_gitlab=project_name
+    )
+
+    # Send notification
+    if app_configs.get("WECOM_BOT_WEBHOOK_URL") or app_configs.get("CUSTOM_WEBHOOK_URL"):
+        logger.info("Codeup (通用审查): 正在发送摘要通知...")
+        num_files_with_issues = len(files_with_issues_details)
+        total_files_checked = len(file_data_list)
+        
+        summary_line = f"AI 通用代码审查已完成。在 {total_files_checked} 个已检查文件中，发现 {num_files_with_issues} 个文件可能存在问题。"
+        if num_files_with_issues == 0:
+            summary_line = f"AI 通用代码审查已完成。所有 {total_files_checked} 个已检查文件均未发现主要问题。"
+            
+        summary_content = f"""**AI通用代码审查完成 (Codeup)**
+
+> 项目: [{project_name}]({project_web_url})
+> MR: [{mr_title}]({mr_url}) (#{mr_local_id})
+> 分支: `{to_branch}` → `{from_branch}`
+
+{summary_line}
+"""
+        send_notifications(summary_content)
+
+    if head_sha:
+        mark_commit_as_processed('codeup_general', project_id_str, str(mr_local_id), head_sha)
+
+    final_comment_text = get_final_summary_comment_text()
+    add_codeup_mr_general_comment(organization_id, project_id_str, mr_local_id, access_token, final_comment_text)
+
+
+@app.route('/codeup_webhook_general', methods=['POST'])
+def codeup_webhook_general():
+    """处理 Codeup Webhook 请求 (通用审查)"""
+    try:
+        data = request.get_json()
+        if data is None: raise ValueError("请求体为空或非有效 JSON")
+    except Exception as e:
+        logger.error(f"解析 Codeup JSON 负载时出错 (通用): {e}")
+        abort(400, "无效的 JSON 负载")
+    
+    mr_attrs = data.get('object_attributes', {})
+    project_id = mr_attrs.get('project_id')
+    project_data = data.get('repository', {})
+    
+    if not project_id:
+        logger.error("错误: Codeup 负载中缺少 object_attributes.project_id (通用)。")
+        abort(400, "Codeup 负载中缺少 project_id")
+
+    project_id_str = str(project_id)
+    config = codeup_project_configs.get(project_id_str)
+    if not config:
+        logger.error(f"错误: 未找到 Codeup 项目 ID {project_id_str} 的配置 (通用)。")
+        abort(404, f"未找到 Codeup 项目 {project_id_str} 的配置。")
+    
+    webhook_secret = config.get('secret')
+    access_token = config.get('token')
+    organization_id = config.get('organizationId')
+
+    if not all([webhook_secret, access_token, organization_id]):
+        logger.error(f"错误: Codeup 项目 {project_id_str} 的配置不完整（缺少 secret/token/organizationId）。")
+        abort(400, "配置不完整")
+
+    if not verify_codeup_signature(request, webhook_secret):
+        abort(401, "Codeup signature verification failed (general).")
+    
+    event_type = request.headers.get('X-Codeup-Event', 'Merge Request Hook')
+    if event_type != "Merge Request Hook":
+        logger.info(f"Codeup (通用): 忽略事件类型: {event_type}")
+        return "事件已忽略", 200
+
+    mr_action = mr_attrs.get('action')
+    mr_state = mr_attrs.get('state')
+    mr_local_id = mr_attrs.get('iid') or mr_attrs.get('localId')
+
+    if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
+        mr_id_str = str(mr_local_id)
+        logger.info(f"Codeup (通用): MR {project_id_str}#{mr_id_str} 已 {mr_action or mr_state}。清理记录...")
+        remove_processed_commit_entries_for_pr_mr('codeup_general', project_id_str, mr_id_str)
+        return f"MR {mr_id_str} 已 {mr_action or mr_state}，通用审查记录已清理。", 200
+
+    if mr_state not in ['opened', 'reopened'] and mr_action not in ['open', 'reopen', 'update']:
+        logger.info(f"Codeup (通用): 忽略 MR 操作 '{mr_action}' 或状态 '{mr_state}'。")
+        return "MR 操作/状态已忽略", 200
+
+    head_sha = mr_attrs.get('last_commit', {}).get('id')
+    from_branch = mr_attrs.get('target_branch')
+    to_branch = mr_attrs.get('source_branch')
+    mr_title = mr_attrs.get('title')
+    mr_url = mr_attrs.get('url')
+    project_name = project_data.get('name')
+    project_web_url = project_data.get('homepage')
+
+    if not all([mr_local_id, head_sha, from_branch, to_branch]):
+        logger.error(f"错误: Codeup 负载中缺少必要的 MR 信息 (通用)。")
+        abort(400, "负载信息不完整")
+
+    logger.info(f"--- 收到 Codeup Merge Request Hook (通用审查) ---")
+    logger.info(f"项目 ID: {project_id_str}, MR ID: {mr_local_id}, Head SHA: {head_sha}")
+
+    if is_commit_processed('codeup_general', project_id_str, str(mr_local_id), head_sha):
+        logger.info(f"Codeup (通用): MR {project_id_str}#{mr_local_id} 的提交 {head_sha} 已处理。跳过。")
+        return "提交已处理", 200
+        
+    future = executor.submit(
+        _process_codeup_general_payload,
+        organization_id=organization_id,
+        project_id_str=project_id_str,
+        access_token=access_token,
+        mr_local_id=mr_local_id,
+        head_sha=head_sha,
+        from_branch=from_branch,
+        to_branch=to_branch,
+        project_name=project_name,
+        mr_title=mr_title,
+        mr_url=mr_url,
+        project_web_url=project_web_url,
+    )
+    future.add_done_callback(handle_async_task_exception)
+
+    logger.info(f"Codeup (通用审查): MR {project_id_str}#{mr_local_id} 的处理任务已提交到后台执行。")
+    return jsonify({"message": "Codeup General Webhook processing task accepted."}), 202

@@ -16,6 +16,8 @@ def _save_review_results_and_log(vcs_type: str, identifier: str, pr_mr_id: str, 
             save_review_results(vcs_type, identifier, pr_mr_id, commit_sha, review_json_string)
         elif vcs_type.startswith('gitlab'): # 包括 'gitlab' 和 'gitlab_general'
             save_review_results(vcs_type, identifier, pr_mr_id, commit_sha, review_json_string, project_name=project_name_for_gitlab)
+        elif vcs_type.startswith('codeup'): # 包括 'codeup' 和 'codeup_general'
+            save_review_results(vcs_type, identifier, pr_mr_id, commit_sha, review_json_string, project_name=project_name_for_gitlab)
         else:
             logger.error(f"未知的 VCS 类型 '{vcs_type}'，无法保存审查结果。")
             return
