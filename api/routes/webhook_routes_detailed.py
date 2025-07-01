@@ -612,7 +612,7 @@ def codeup_webhook():
     if event_type != "Merge Request Hook":
         logger.info(f"Codeup: 忽略事件类型: {event_type}")
         return "事件已忽略", 200
-    logger.info("获取得mr_attrs："+mr_attrs)
+    logger.info(f"获取得mr_attrs：{mr_attrs}")
 
     mr_action = mr_attrs.get('action') # e.g., 'open', 'update', 'close', 'merge'
     mr_state = mr_attrs.get('state') # e.g., 'opened', 'closed', 'merged'
