@@ -568,7 +568,7 @@ def codeup_webhook_general():
 
     mr_action = mr_attrs.get('action')
     mr_state = mr_attrs.get('state')
-    mr_local_id = mr_attrs.get('iid') or mr_attrs.get('localId')
+    mr_local_id = mr_attrs.get('iid') or mr_attrs.get('local_id')
 
     if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
         mr_id_str = str(mr_local_id)

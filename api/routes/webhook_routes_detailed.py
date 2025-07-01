@@ -618,8 +618,8 @@ def codeup_webhook():
     mr_state = mr_attrs.get('state') # e.g., 'opened', 'closed', 'merged'
 
     mr_local_id = mr_attrs.get('iid') # 在 GitLab 中是 iid, 假设 Codeup 也是
-    if not mr_local_id: # Codeup 文档使用 localId, 可能是这个
-        mr_local_id = mr_attrs.get('localId')
+    if not mr_local_id: # Codeup 文档使用 local_id, 可能是这个
+        mr_local_id = mr_attrs.get('local_id')
 
     if mr_action in ['close', 'merge'] or mr_state in ['closed', 'merged']:
         mr_id_str = str(mr_local_id)
